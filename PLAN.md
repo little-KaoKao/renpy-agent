@@ -1,7 +1,7 @@
 # Agentic Galgame 项目计划
 
-> 最后更新:2026-04-19
-> 当前阶段:架构确定(方案 F) + 目录层级就位(agent 仓即项目根),尚未进入编码
+> 最后更新:2026-04-22
+> 当前阶段:v0.2 minimal pipeline 已落地(串行 Planner→Writer→Storyboarder→Coder→QA 可 build,Claude 走 Bedrock);v0.3a 启动中(RunningHub client 上线,尚未接入 POC)
 
 ---
 
@@ -356,12 +356,26 @@ async function plan() {
 
 ### v0.3 资产闭环
 
-- [ ] `executers/common/runninghub-client.ts`:封装 RunningHub API(图/视频统一入口、轮询、错误)
-- [ ] 角色/场景设计师接入 RunningHub 图像模型(立绘、差分、背景、道具)
-- [ ] 分镜师接入 RunningHub 视频模型(过场 CG、关键剧情 CG)
-- [ ] 角色设计师的动态立绘(视频循环)跑通 —— 可选,先看必要性
-- [ ] 视频资产在 Ren'Py 里的性能实测(`Movie()` 播放、首帧占位、WebM 转码策略)
-- [ ] Stage B 替换跑通(图 + 视频两类产物都能原地替换)
+**v0.3a(当前)——LLM provider + 资产后端客户端就位**
+
+- [X] LlmClient 支持 AWS Bedrock:`ClaudeLlmClient` 在 `CLAUDE_CODE_USE_BEDROCK=1` 时走 `@anthropic-ai/bedrock-sdk`,否则走 `@anthropic-ai/sdk`;模型默认 `anthropic.claude-sonnet-4-5-20250929-v1:0` / `claude-sonnet-4-6`
+- [X] [src/executers/common/runninghub-client.ts](src/executers/common/runninghub-client.ts):`HttpRunningHubClient` 封装 `/task/openapi/ai-app/run` + `/status` + `/outputs`,fetch 可注入便于测试;`AiAppSchema` 把 `apiId`(`api-xxx`)→ `webappId` + promptNode/referenceImageNode
+- [X] `.env.example` 更新为 Bedrock-first;`pnpm test` 55 个用例全绿
+- [ ] RunningHub AI-App schemas 登记(登录控制台 → "API 调用"面板,把 §3.5 表里 6 个模型的 `webappId`/`promptNodeId`/`referenceImageNodeId` 真实值填进一个 schema registry,例如 [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts)
+
+**v0.3b —— 角色 / 场景设计师接入(图像路径)**
+
+- [ ] `src/executers/character-designer/` 接入 RunningHub:立绘主图(`悠船文生图-v7`)、表情差分、占位 → 真图切换
+- [ ] `src/executers/scene-designer/` 接入:背景图(`seedream-v5-lite-文生图`)、道具图、时段/光照变体
+- [ ] AssetRegistry 记账 + `swap_asset_placeholder`:Stage B 原地替换 `.rpy` 里的 `image` 定义
+- [ ] 典型修改 e2e:先跑 v0.2 pipeline → 真图 ready → swap → 重跑 `renpy.exe lint` 通过
+
+**v0.3c —— 分镜师接入(视频路径)**
+
+- [ ] 分镜师 Cutscene 识别规则(过场 / 关键剧情 CG)
+- [ ] 接入 RunningHub 视频模型(`Vidu-图生视频-q3-pro` / `万相2.7-图生视频` / `Vidu-参考生视频-q3`)
+- [ ] 角色动态立绘(`seedance2.0/多模态视频`)可选
+- [ ] 视频在 Ren'Py 里的性能实测(`Movie()` 播放、首帧占位、WebM 转码策略)
 
 ### v0.4 修改闭环
 

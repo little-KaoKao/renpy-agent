@@ -51,6 +51,14 @@ export type {
   RunningHubSubmitParams,
   RunningHubTaskResult,
   RunningHubTaskStatus,
+  AiAppSchema,
+  FetchLike,
+  HttpRunningHubClientOptions,
+} from './executers/common/runninghub-client.js';
+export {
+  HttpRunningHubClient,
+  RunningHubError,
+  RUNNINGHUB_DEFAULT_BASE_URL,
 } from './executers/common/runninghub-client.js';
 
 // --- v0.2 minimal pipeline ---
@@ -63,7 +71,16 @@ export type {
   LlmUsage,
 } from './llm/types.js';
 
-export { ClaudeLlmClient, CLAUDE_DEFAULT_MODEL, extractJsonBlock } from './llm/claude-client.js';
+export {
+  ClaudeLlmClient,
+  CLAUDE_DEFAULT_MODEL,
+  CLAUDE_DIRECT_DEFAULT_MODEL,
+  CLAUDE_BEDROCK_DEFAULT_MODEL,
+  CLAUDE_DEFAULT_MAX_TOKENS,
+  extractJsonBlock,
+  resolveClaudeMode,
+} from './llm/claude-client.js';
+export type { ClaudeTransportMode, ClaudeLlmClientOptions } from './llm/claude-client.js';
 
 export type {
   PlannerOutput,

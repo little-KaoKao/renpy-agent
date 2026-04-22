@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ClaudeLlmClient, extractJsonBlock } from './claude-client.js';
+import {
+  ClaudeLlmClient,
+  CLAUDE_BEDROCK_DEFAULT_MODEL,
+  CLAUDE_DIRECT_DEFAULT_MODEL,
+  extractJsonBlock,
+  resolveClaudeMode,
+} from './claude-client.js';
 
 function makeFakeClient(responseText: string) {
   const create = vi.fn().mockResolvedValue({
@@ -12,7 +18,7 @@ function makeFakeClient(responseText: string) {
 describe('ClaudeLlmClient', () => {
   it('passes system messages via system field and user/assistant in messages', async () => {
     const { create, client } = makeFakeClient('hi');
-    const llm = new ClaudeLlmClient({ client: client as any });
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'direct' });
 
     await llm.chat({
       messages: [
@@ -29,7 +35,7 @@ describe('ClaudeLlmClient', () => {
 
   it('returns concatenated text content and mapped usage', async () => {
     const { client } = makeFakeClient('the output');
-    const llm = new ClaudeLlmClient({ client: client as any });
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'direct' });
 
     const res = await llm.chat({ messages: [{ role: 'user', content: 'q' }] });
 
@@ -39,21 +45,87 @@ describe('ClaudeLlmClient', () => {
 
   it('throws when no user/assistant messages are provided', async () => {
     const { client } = makeFakeClient('x');
-    const llm = new ClaudeLlmClient({ client: client as any });
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'direct' });
 
     await expect(
       llm.chat({ messages: [{ role: 'system', content: 'only-sys' }] }),
     ).rejects.toThrow(/at least one user/);
   });
 
-  it('throws when ANTHROPIC_API_KEY is missing and no client provided', () => {
+  it('throws when direct mode has no ANTHROPIC_API_KEY', () => {
     const prev = process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     try {
-      expect(() => new ClaudeLlmClient()).toThrow(/ANTHROPIC_API_KEY/);
+      expect(() => new ClaudeLlmClient({ mode: 'direct' })).toThrow(/ANTHROPIC_API_KEY/);
     } finally {
       if (prev !== undefined) process.env.ANTHROPIC_API_KEY = prev;
     }
+  });
+
+  it('throws when bedrock mode has no AWS_REGION', () => {
+    const prev = process.env.AWS_REGION;
+    delete process.env.AWS_REGION;
+    try {
+      expect(() => new ClaudeLlmClient({ mode: 'bedrock' })).toThrow(/AWS_REGION/);
+    } finally {
+      if (prev !== undefined) process.env.AWS_REGION = prev;
+    }
+  });
+
+  it('throws when bedrock mode has region but no credentials', () => {
+    const prevRegion = process.env.AWS_REGION;
+    const prevBearer = process.env.AWS_BEARER_TOKEN_BEDROCK;
+    const prevAk = process.env.AWS_ACCESS_KEY_ID;
+    process.env.AWS_REGION = 'us-east-1';
+    delete process.env.AWS_BEARER_TOKEN_BEDROCK;
+    delete process.env.AWS_ACCESS_KEY_ID;
+    try {
+      expect(() => new ClaudeLlmClient({ mode: 'bedrock' })).toThrow(/Bedrock credentials/);
+    } finally {
+      if (prevRegion !== undefined) process.env.AWS_REGION = prevRegion;
+      else delete process.env.AWS_REGION;
+      if (prevBearer !== undefined) process.env.AWS_BEARER_TOKEN_BEDROCK = prevBearer;
+      if (prevAk !== undefined) process.env.AWS_ACCESS_KEY_ID = prevAk;
+    }
+  });
+
+  it('defaults to Bedrock-prefixed model in bedrock mode', () => {
+    const { client } = makeFakeClient('x');
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'bedrock' });
+    expect((llm as any).model).toBe(CLAUDE_BEDROCK_DEFAULT_MODEL);
+    expect(llm.mode).toBe('bedrock');
+  });
+
+  it('defaults to direct-short model in direct mode', () => {
+    const { client } = makeFakeClient('x');
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'direct' });
+    expect((llm as any).model).toBe(CLAUDE_DIRECT_DEFAULT_MODEL);
+    expect(llm.mode).toBe('direct');
+  });
+
+  it('honors explicit model override', async () => {
+    const { create, client } = makeFakeClient('x');
+    const llm = new ClaudeLlmClient({
+      client: client as any,
+      mode: 'direct',
+      model: 'claude-opus-4-7',
+    });
+    await llm.chat({ messages: [{ role: 'user', content: 'q' }] });
+    expect(create.mock.calls[0]![0].model).toBe('claude-opus-4-7');
+  });
+});
+
+describe('resolveClaudeMode', () => {
+  it('returns bedrock when CLAUDE_CODE_USE_BEDROCK=1', () => {
+    expect(resolveClaudeMode({ CLAUDE_CODE_USE_BEDROCK: '1' } as any)).toBe('bedrock');
+  });
+
+  it('returns direct when CLAUDE_CODE_USE_BEDROCK unset', () => {
+    expect(resolveClaudeMode({} as any)).toBe('direct');
+  });
+
+  it('returns direct when CLAUDE_CODE_USE_BEDROCK=0', () => {
+    expect(resolveClaudeMode({ CLAUDE_CODE_USE_BEDROCK: '0' } as any)).toBe('direct');
   });
 });
 
