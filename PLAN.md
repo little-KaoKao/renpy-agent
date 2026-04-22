@@ -64,13 +64,17 @@
 │
 ├── src/                        # 所有 TS 源码(编译后落在 dist/,不入 git)
 │   ├── index.ts                # barrel,re-export 全部公开类型
+│   ├── cli.ts                  # `renpy-agent` CLI 入口(v0.2 起)
 │   ├── schema/
 │   │   └── galgame-workspace.ts    # 15 文档 TS schema
 │   ├── workflows/
 │   │   └── galgame-workflows.ts    # 7 POC 的 tool-set 类型契约
 │   ├── planner/
 │   │   └── index.ts                # PlannerTools 类型契约
-│   └── executers/
+│   ├── llm/                    # LlmClient 抽象 + ClaudeLlmClient(v0.2)
+│   ├── pipeline/               # 单次 POC 串行编排(v0.2):planner/writer/storyboarder/coder/qa/run-pipeline
+│   ├── templates/              # 静态 .rpy 模板(gui/screens/options,构建时拷贝到 dist/)
+│   └── executers/              # V5 Executer 实现(尚未接线,v0.3+ 用)
 │       ├── common/                 # runninghub-client 等跨 POC 共享模块
 │       ├── producer/
 │       ├── writer/
@@ -337,11 +341,18 @@ async function plan() {
 - [X] `README.md` + `.gitignore` + `.env.example` + `git init` + push 到 GitHub
 - [X] RunningHub 最小 smoke test(文生图握手)—— [scripts/runninghub-smoke.mjs](scripts/runninghub-smoke.mjs) 实测通路:真 key → `code=1 webapp not exists`(认证通过,卡参数),假 key → `code=301 user not exist`,认证 + JSON 通路均 OK。真实 `webappId` 仍需登录 RunningHub 控制台核对,留到 v0.3 封 client 时细化
 
-### v0.2 最小闭环
+### v0.2 最小闭环(代码已落地,未跑过端到端真实 API)
 
-- [ ] Planner 跑通:吃灵感 → 产 Plan
-- [ ] 编剧 + 分镜师 + 编码师三位接入,能产 Stage A demo
-- [ ] QA 能跑 `.rpy` 抓语法错
+- [X] [src/llm/claude-client.ts](src/llm/claude-client.ts):LlmClient 抽象 + `ClaudeLlmClient`(`@anthropic-ai/sdk`,model=`claude-sonnet-4-6`)
+- [X] [src/pipeline/planner.ts](src/pipeline/planner.ts):吃灵感 → 产 PlannerOutput(system prompt 内嵌 15 文档 schema)
+- [X] [src/pipeline/writer.ts](src/pipeline/writer.ts):吃 PlannerOutput → 产分场对白
+- [X] [src/pipeline/storyboarder.ts](src/pipeline/storyboarder.ts):吃 Writer → 产 ≤8 shots
+- [X] [src/pipeline/coder.ts](src/pipeline/coder.ts):deterministic 模板生成 `script.rpy` + `options/gui/screens.rpy`,Solid/Transform 占位
+- [X] [src/pipeline/qa.ts](src/pipeline/qa.ts):`renpy.exe <game> lint` 包装,无 SDK 时 `skipped`
+- [X] [src/pipeline/run-pipeline.ts](src/pipeline/run-pipeline.ts) + [src/cli.ts](src/cli.ts):串行编排 + `renpy-agent <inspiration>` CLI
+- [X] vitest 单元测试 34 个(Coder / QA / CLI / LLM / run-pipeline e2e 用 scripted LLM)
+- [ ] **手动验收**:`node --env-file=.env dist/cli.js "一个樱花树下的告白故事"` 真跑一次 Claude → 产物能被 `renpy.exe` 启动 → 8 镜头占位能看到
+
 
 ### v0.3 资产闭环
 

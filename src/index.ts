@@ -52,3 +52,34 @@ export type {
   RunningHubTaskResult,
   RunningHubTaskStatus,
 } from './executers/common/runninghub-client.js';
+
+// --- v0.2 minimal pipeline ---
+
+export type {
+  LlmClient,
+  LlmChatParams,
+  LlmMessage,
+  LlmResponse,
+  LlmUsage,
+} from './llm/types.js';
+
+export { ClaudeLlmClient, CLAUDE_DEFAULT_MODEL, extractJsonBlock } from './llm/claude-client.js';
+
+export type {
+  PlannerOutput,
+  WriterOutput,
+  StoryboarderOutput,
+  TestRunResult,
+  PipelineResult,
+} from './pipeline/types.js';
+
+export { runPlanner } from './pipeline/planner.js';
+export { runWriter } from './pipeline/writer.js';
+export { runStoryboarder } from './pipeline/storyboarder.js';
+export {
+  generateGameProject,
+  writeGameProject,
+  renderScriptRpy,
+} from './pipeline/coder.js';
+export { runQa, parseLintOutput } from './pipeline/qa.js';
+export { runPipeline, slugifyStoryName } from './pipeline/run-pipeline.js';

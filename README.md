@@ -27,18 +27,22 @@ cd renpy-agent
 pwsh scripts/setup-renpy.ps1
 
 # 3. 装依赖 + 配 key
-#    (Node 依赖等 package.json 就绪后补)
+pnpm install
 cp .env.example .env
-#    用编辑器打开 .env 填入 RUNNINGHUB_API_KEY 和 LLM key
+#    用编辑器打开 .env 填入 ANTHROPIC_API_KEY(v0.2 必需)和
+#    RUNNINGHUB_API_KEY(v0.3 开始用到)
 
 # 4. 验证环境:跑手工 demo,应当出现 8 镜头占位画面
 renpy-sdk/renpy.exe docs/examples/baiying-demo
 
-# 5. (agent 代码就绪后)喂一段灵感,产出在 runtime/games/<story-name>/game/
-#    具体命令见 PLAN.md §10 各阶段
+# 5. 构建 agent 代码
+pnpm build
 
-# 6. 玩 agent 产物
-renpy-sdk/renpy.exe runtime/games/<story-name>/game
+# 6. 喂一段灵感,产出在 runtime/games/<story-name>/game/
+node --env-file=.env dist/cli.js --name sakura-night "一个关于樱花树下告白的故事"
+
+# 7. 玩 agent 产物
+renpy-sdk/renpy.exe runtime/games/sakura-night/game
 ```
 
 ### 升 Ren'Py 版本
@@ -49,18 +53,18 @@ renpy-sdk/renpy.exe runtime/games/<story-name>/game
 
 ## 目录速查
 
-| 路径                       | 是什么                                                     |
-| -------------------------- | ---------------------------------------------------------- |
-| [PLAN.md](PLAN.md)         | 架构 / 决策 / 路线图(**读这个**)                        |
-| [schema/](schema/)         | 15 文档 TS schema(Planner 的 system prompt)              |
-| [workflows/](workflows/)   | 7 POC 的 function 签名                                    |
-| [planner/](planner/)       | Planner Agent 实现                                        |
-| [executers/](executers/)   | 7 POC 的 tool 实现 + `common/runninghub-client.ts`        |
-| [resources/](resources/)   | 分镜师 skill 等 agent 侧资源                              |
-| [scripts/](scripts/)       | `setup-renpy.ps1` 等一次性脚本                            |
-| [docs/](docs/)             | 架构文档 + `examples/baiying-demo` 手工参考               |
-| `renpy-sdk/`(本地生成)   | junction → `renpy-*-sdk/`,统一入口 `renpy-sdk/renpy.exe` |
-| `runtime/`(本地生成)     | agent 运行产物(每游戏独立 workspace + 记忆 + 日志)      |
+| 路径                         | 是什么                                                         |
+| ---------------------------- | -------------------------------------------------------------- |
+| [PLAN.md](PLAN.md)           | 架构 / 决策 / 路线图(**读这个**)                            |
+| [src/](src/)                 | 全部 TS 源码;按 schema / workflows / pipeline / llm / executers / planner 分层 |
+| [src/pipeline/](src/pipeline/) | v0.2 minimal pipeline:Planner → Writer → Storyboarder → Coder → QA |
+| [src/llm/](src/llm/)         | LlmClient 抽象 + ClaudeLlmClient                              |
+| [src/cli.ts](src/cli.ts)     | `renpy-agent` CLI 入口                                        |
+| [resources/](resources/)     | 分镜师 skill 等 agent 侧资源                                  |
+| [scripts/](scripts/)         | `setup-renpy.ps1` / `runninghub-smoke.mjs` / `copy-templates.mjs` |
+| [docs/](docs/)               | 架构文档 + `examples/baiying-demo` 手工参考                   |
+| `renpy-sdk/`(本地生成)     | junction → `renpy-*-sdk/`,统一入口 `renpy-sdk/renpy.exe`     |
+| `runtime/`(本地生成)       | agent 运行产物(每游戏独立 workspace + 记忆 + 日志)          |
 
 ---
 

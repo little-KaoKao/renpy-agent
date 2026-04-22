@@ -6,16 +6,28 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "build": "tsc && node scripts/copy-templates.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node --env-file=.env dist/cli.js"
   },
-  "keywords": ["renpy", "galgame", "agent"],
+  "bin": {
+    "renpy-agent": "dist/cli.js"
+  },
+  "keywords": [
+    "renpy",
+    "galgame",
+    "agent"
+  ],
   "license": "UNLICENSED",
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "typescript": "^5.5.0",
-    "@types/node": "^20.0.0"
+    "vitest": "^4.1.5"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.90.0",
     "dotenv": "^16.0.0"
   }
 }
