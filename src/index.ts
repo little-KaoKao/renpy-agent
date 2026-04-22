@@ -122,6 +122,18 @@ export type {
   GenerateSceneBackgroundResult,
 } from './executers/scene-designer/generate-background.js';
 
+export {
+  generateCutsceneVideo,
+  buildCutscenePrompt,
+  appKeyForCutscene,
+  logicalKeyForCutsceneShot,
+} from './executers/storyboarder/generate-cutscene.js';
+export type {
+  CutsceneKind,
+  GenerateCutsceneVideoParams,
+  GenerateCutsceneVideoResult,
+} from './executers/storyboarder/generate-cutscene.js';
+
 // --- v0.2 minimal pipeline ---
 
 export type {
@@ -147,6 +159,8 @@ export type {
   PlannerOutput,
   WriterOutput,
   StoryboarderOutput,
+  StoryboarderOutputShot,
+  StoryboarderOutputCutscene,
   TestRunResult,
   PipelineResult,
 } from './pipeline/types.js';
@@ -160,6 +174,7 @@ export {
   renderScriptRpy,
   logicalKeyForCharacter,
   logicalKeyForScene,
+  logicalKeyForCutscene,
 } from './pipeline/coder.js';
 export { runQa, parseLintOutput } from './pipeline/qa.js';
 export { runPipeline, slugifyStoryName } from './pipeline/run-pipeline.js';

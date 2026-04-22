@@ -4,6 +4,7 @@ import {
   assignSceneIdentifiers,
   generateGameProject,
   logicalKeyForCharacter,
+  logicalKeyForCutscene,
   logicalKeyForScene,
   renderScriptRpy,
 } from './coder.js';
@@ -193,6 +194,78 @@ describe('renderScriptRpy with AssetRegistry (Stage B binding)', () => {
     expect(script).toMatch(/image sprite_\w+ = "images\/char\/baiying\.png"/);
     // Scene without a ready asset still falls back to Solid
     expect(script).toContain('image bg_classroom = Solid(');
+  });
+
+  it('renders cutscene shots as placeholder caption when no video is ready', () => {
+    const sb: StoryboarderOutput = {
+      shots: [
+        {
+          shotNumber: 1,
+          description: 'opening title sweep',
+          characters: [],
+          sceneName: 'sakura_night',
+          staging: 'enter',
+          transforms: 'reset',
+          transition: 'fade',
+          cutscene: { kind: 'transition', motionPrompt: 'slow dolly through cherry blossoms' },
+          dialogueLines: [{ speaker: 'narrator', text: '春の夜、ひらり。' }],
+        },
+        {
+          shotNumber: 2,
+          description: 'first words after the cut',
+          characters: ['白樱'],
+          sceneName: 'sakura_night',
+          staging: 'front',
+          transforms: 'stand breathing',
+          transition: 'dissolve',
+          dialogueLines: [{ speaker: '白樱', text: '你来了。' }],
+        },
+      ],
+    };
+    const script = renderScriptRpy(PLANNER_FIXTURE, sb);
+    expect(script).toContain('cutscene: transition');
+    expect(script).toContain('scene bg_black with fade');
+    expect(script).toContain('▶ Cutscene placeholder');
+    // no movie_cutscene line when registry missing
+    expect(script).not.toContain('renpy.movie_cutscene');
+    // after a cutscene, the next non-cutscene shot re-issues its scene
+    const sceneLines = script.split('\n').filter((l) => l.trim().startsWith('scene bg_'));
+    expect(sceneLines.some((l) => l.includes('bg_sakura_night'))).toBe(true);
+  });
+
+  it('renders movie_cutscene when registry has a ready cutscene asset', () => {
+    const sb: StoryboarderOutput = {
+      shots: [
+        {
+          shotNumber: 1,
+          description: 'confession CG',
+          characters: ['白樱'],
+          sceneName: 'sakura_night',
+          staging: 'front',
+          transforms: 'lean in',
+          transition: 'fade',
+          cutscene: { kind: 'reference', motionPrompt: 'tearful embrace' },
+          dialogueLines: [{ speaker: 'narrator', text: 'それは誓い。' }],
+        },
+      ],
+    };
+    const registry: AssetRegistryFile = {
+      version: 1,
+      entries: [
+        {
+          placeholderId: 'cutscene:cutscene:shot_1',
+          logicalKey: logicalKeyForCutscene(1),
+          assetType: 'cutscene',
+          realAssetLocalPath: 'videos/cut/shot_1.mp4',
+          remoteAssetUri: 'https://cdn/confession.mp4',
+          status: 'ready',
+          updatedAt: '2026-04-23T00:00:00.000Z',
+        },
+      ],
+    };
+    const script = renderScriptRpy(PLANNER_FIXTURE, sb, registry);
+    expect(script).toContain('$ renpy.movie_cutscene("videos/cut/shot_1.mp4")');
+    expect(script).not.toContain('▶ Cutscene placeholder');
   });
 
   it('ignores entries whose status != ready', () => {

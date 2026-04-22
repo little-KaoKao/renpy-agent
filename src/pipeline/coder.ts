@@ -90,7 +90,7 @@ export function renderScriptRpy(
   parts.push(renderImageDefinitions(planner, sceneIdents, charIdents, assetRegistry));
   parts.push(renderCharacterDefinitions(planner, charIdents));
   parts.push(renderTransforms());
-  parts.push(renderMainLabel(planner, storyboarder, charIdents, sceneIdents));
+  parts.push(renderMainLabel(planner, storyboarder, charIdents, sceneIdents, assetRegistry));
   return parts.join('\n\n');
 }
 
@@ -202,13 +202,37 @@ function renderMainLabel(
   storyboarder: StoryboarderOutput,
   charIdents: ReadonlyMap<string, string>,
   sceneIdents: ReadonlyMap<string, string>,
+  assetRegistry?: AssetRegistryFile,
 ): string {
   const lines: string[] = ['label start:'];
   let activeScene: string | null = null;
 
   for (const shot of storyboarder.shots) {
     lines.push('');
-    lines.push(`    # ── Shot ${shot.shotNumber}: ${oneLine(shot.description)} ──`);
+    const cutsceneTag = shot.cutscene ? ` (cutscene: ${shot.cutscene.kind})` : '';
+    lines.push(`    # ── Shot ${shot.shotNumber}: ${oneLine(shot.description)}${cutsceneTag} ──`);
+
+    if (shot.cutscene) {
+      const realVideo = lookupRealAsset(
+        assetRegistry,
+        'cutscene',
+        logicalKeyForCutscene(shot.shotNumber),
+      );
+      if (realVideo) {
+        lines.push(`    $ renpy.movie_cutscene("${realVideo}")`);
+      } else {
+        lines.push('    scene bg_black with fade');
+        lines.push(
+          `    centered "▶ Cutscene placeholder — ${escapeRenpyString(oneLine(shot.description))}"`,
+        );
+      }
+      // Cutscene fully covers the stage; next non-cutscene shot must re-issue its scene.
+      activeScene = null;
+      for (const line of shot.dialogueLines) {
+        lines.push(renderDialogueLine(line.speaker, line.text, charIdents));
+      }
+      continue;
+    }
 
     const sceneIdent = sceneIdents.get(shot.sceneName);
     if (sceneIdent && sceneIdent !== activeScene) {
@@ -324,9 +348,13 @@ export function logicalKeyForScene(name: string): string {
   return `scene:${slugToIdent(name) || 'scene'}:bg`;
 }
 
+export function logicalKeyForCutscene(shotNumber: number): string {
+  return `cutscene:shot_${shotNumber}`;
+}
+
 function lookupRealAsset(
   registry: AssetRegistryFile | undefined,
-  assetType: 'character_main' | 'scene_background',
+  assetType: 'character_main' | 'scene_background' | 'cutscene',
   logicalKey: string,
 ): string | undefined {
   if (!registry) return undefined;

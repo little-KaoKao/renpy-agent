@@ -1,7 +1,7 @@
 # Agentic Galgame 项目计划
 
-> 最后更新:2026-04-22
-> 当前阶段:v0.2 minimal pipeline + v0.3a/b 骨架已落地;Coder 支持 AssetRegistry 真资产绑定;角色/场景设计师主干接通 RunningHub(真 webappId 待控制台核对)
+> 最后更新:2026-04-23
+> 当前阶段:v0.2 minimal pipeline + v0.3a/b 骨架已落地;Coder 支持 AssetRegistry 真资产绑定;角色/场景设计师主干接通 RunningHub(真 webappId 待控制台核对);v0.3c 分镜师视频路径骨架就位(Cutscene 识别字段 + `renpy.movie_cutscene` 渲染 + 视频 executer 占位,真 Vidu/Wan schema 待控制台核对)
 
 ---
 
@@ -378,10 +378,13 @@ async function plan() {
 
 **v0.3c —— 分镜师接入(视频路径)**
 
-- [ ] 分镜师 Cutscene 识别规则(过场 / 关键剧情 CG)
-- [ ] 接入 RunningHub 视频模型(`Vidu-图生视频-q3-pro` / `万相2.7-图生视频` / `Vidu-参考生视频-q3`)
-- [ ] 角色动态立绘(`seedance2.0/多模态视频`)可选
-- [ ] 视频在 Ren'Py 里的性能实测(`Movie()` 播放、首帧占位、WebM 转码策略)
+- [X] 分镜师 Cutscene 识别字段([src/pipeline/types.ts](src/pipeline/types.ts) 的 `StoryboarderOutputCutscene` + storyboarder system prompt 描述:`kind: transition | reference`,配合 `referenceSceneName` / `referenceCharacterName`)
+- [X] Coder 识别 cutscene:有 ready 视频则吐 `$ renpy.movie_cutscene("videos/cut/shot_N.mp4")`;没有就 `scene bg_black with fade` + caption 占位(黑幕合法 Stage A)
+- [X] [src/executers/storyboarder/generate-cutscene.ts](src/executers/storyboarder/generate-cutscene.ts):`generateCutsceneVideo` 复用 `runImageTask`,`transition` 走 `CUTSCENE_IMAGE_TO_VIDEO`,`reference` 走 `CUTSCENE_REFERENCE_VIDEO`,产物落 `videos/cut/shot_N.mp4`
+- [X] 测试:coder 加 2 个 cutscene 用例(占位 + 真视频绑定),storyboarder executer 加 3+3 用例(含 reference 缺参校验)
+- [ ] RunningHub 视频 AI-App schemas 真值登记(同 v0.3b 图像模型一起,登录 RunningHub 控制台核对 `CUTSCENE_IMAGE_TO_VIDEO` / `CUTSCENE_REFERENCE_VIDEO` 的 `webappId`/`promptNodeId`/`referenceImageNodeId` 后覆盖 `PLACEHOLDER_APP_SCHEMAS`)
+- [ ] 角色动态立绘(`seedance2.0/多模态视频`)可选 —— 本版 schema 已占位(`CHARACTER_DYNAMIC_SPRITE`),executer 延后
+- [ ] 视频在 Ren'Py 里的性能实测(`renpy.movie_cutscene` 播放、首帧占位、WebM 转码策略)
 
 ### v0.4 修改闭环
 

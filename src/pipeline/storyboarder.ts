@@ -16,6 +16,18 @@ Reference patterns from baiying-demo (the Stage-A fixture we're modeling after):
 - "effects": optional, e.g. "sakura particles", "text shader jitter".
 - The final shot should include a closing beat.
 
+Cutscene (video) path — ONLY use when the beat genuinely demands motion that static
+sprites + transforms cannot sell:
+- opening/closing/chapter transition → cutscene.kind = "transition",
+  referenceSceneName only (no character parameter).
+- pivotal plot CG (kiss / fight / death / big reveal) → cutscene.kind = "reference",
+  referenceSceneName + referenceCharacterName (ONE hero character).
+- Omit the cutscene field entirely for normal dialogue shots. Do NOT mark more than 2
+  cutscene shots per 8-shot board — videos are expensive and slow.
+- When cutscene is set, sceneName / characters / staging / transforms still fill in for
+  Stage A placeholder rendering (the Coder shows a black screen + caption until the real
+  video is ready).
+
 Return ONLY a JSON object inside a \`\`\`json fence, matching:
 \`\`\`typescript
 interface StoryboarderOutput {
@@ -28,6 +40,12 @@ interface StoryboarderOutput {
     transforms: string;          // short phrase, see verbs above
     transition: string;          // fade | dissolve | none
     effects?: string;            // optional short phrase
+    cutscene?: {                 // optional video beat; omit entirely when not needed
+      kind: "transition" | "reference";
+      motionPrompt: string;      // one-sentence description of the camera / subject motion
+      referenceSceneName?: string;    // one of planner.scenes[].name
+      referenceCharacterName?: string; // for kind="reference" only
+    };
     dialogueLines: Array<{       // 1-6 lines per shot
       speaker: string;           // character name, or "narrator"
       text: string;

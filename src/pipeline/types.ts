@@ -40,6 +40,21 @@ export interface StoryboarderOutputDialogueLine {
   readonly text: string;
 }
 
+/**
+ * 视频类镜头(Cutscene)。分镜师决定某个镜头走视频路径时,在 shot 上挂这个字段。
+ * - `kind='transition'`:片头/片尾/章节过场 CG,通常只吃场景首帧。
+ * - `kind='reference'`:关键剧情 CG(吻戏/战斗/死亡等),需要角色 + 场景参考图。
+ *
+ * 占位原则同 Stage A:referenceSceneName / referenceCharacterName 是逻辑引用,
+ * 真资产 URI 由 Stage B 从 AssetRegistry 里反查出来喂给 RunningHub。
+ */
+export interface StoryboarderOutputCutscene {
+  readonly kind: 'transition' | 'reference';
+  readonly motionPrompt: string;
+  readonly referenceSceneName?: string;
+  readonly referenceCharacterName?: string;
+}
+
 export interface StoryboarderOutputShot {
   readonly shotNumber: number;
   readonly description: string;
@@ -50,6 +65,7 @@ export interface StoryboarderOutputShot {
   readonly transition: string;
   readonly effects?: string;
   readonly dialogueLines: ReadonlyArray<StoryboarderOutputDialogueLine>;
+  readonly cutscene?: StoryboarderOutputCutscene;
 }
 
 export interface StoryboarderOutput {
