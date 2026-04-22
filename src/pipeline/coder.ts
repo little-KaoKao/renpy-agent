@@ -2,6 +2,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import type { PlannerOutput, StoryboarderOutput } from './types.js';
+import type { AssetRegistryFile } from '../assets/registry.js';
+import { findByLogicalKey } from '../assets/registry.js';
 
 const SCENE_PALETTE = [
   '#1a2540', // deep night blue
@@ -38,12 +40,13 @@ export interface GameProjectFiles {
 export interface GenerateGameParams {
   readonly planner: PlannerOutput;
   readonly storyboarder: StoryboarderOutput;
+  readonly assetRegistry?: AssetRegistryFile;
 }
 
 export async function generateGameProject(
   params: GenerateGameParams,
 ): Promise<GameProjectFiles> {
-  const scriptRpy = renderScriptRpy(params.planner, params.storyboarder);
+  const scriptRpy = renderScriptRpy(params.planner, params.storyboarder, params.assetRegistry);
   const [optionsTpl, guiTpl, screensTpl] = await Promise.all([
     loadTemplate('options.rpy'),
     loadTemplate('gui.rpy'),
@@ -77,13 +80,14 @@ export async function writeGameProject(params: WriteGameFilesParams): Promise<vo
 export function renderScriptRpy(
   planner: PlannerOutput,
   storyboarder: StoryboarderOutput,
+  assetRegistry?: AssetRegistryFile,
 ): string {
   const charIdents = assignCharacterIdentifiers(planner.characters.map((c) => c.name));
   const sceneIdents = assignSceneIdentifiers(planner.scenes.map((s) => s.name));
 
   const parts: string[] = [];
   parts.push(headerComment(planner.projectTitle));
-  parts.push(renderImageDefinitions(planner, sceneIdents, charIdents));
+  parts.push(renderImageDefinitions(planner, sceneIdents, charIdents, assetRegistry));
   parts.push(renderCharacterDefinitions(planner, charIdents));
   parts.push(renderTransforms());
   parts.push(renderMainLabel(planner, storyboarder, charIdents, sceneIdents));
@@ -105,21 +109,33 @@ function renderImageDefinitions(
   planner: PlannerOutput,
   sceneIdents: ReadonlyMap<string, string>,
   charIdents: ReadonlyMap<string, string>,
+  assetRegistry?: AssetRegistryFile,
 ): string {
-  const lines: string[] = ['# --- Backgrounds (Solid placeholders) ---'];
+  const lines: string[] = ['# --- Backgrounds ---'];
   planner.scenes.forEach((s, i) => {
-    const color = SCENE_PALETTE[i % SCENE_PALETTE.length];
-    lines.push(`image bg_${sceneIdents.get(s.name)!} = Solid("${color}")`);
+    const ident = sceneIdents.get(s.name)!;
+    const real = lookupRealAsset(assetRegistry, 'scene_background', logicalKeyForScene(s.name));
+    if (real) {
+      lines.push(`image bg_${ident} = "${real}"`);
+    } else {
+      const color = SCENE_PALETTE[i % SCENE_PALETTE.length];
+      lines.push(`image bg_${ident} = Solid("${color}")  # placeholder`);
+    }
   });
   lines.push('image bg_black = Solid("#000000")');
   lines.push('');
-  lines.push('# --- Character sprites (Solid rectangle placeholders) ---');
+  lines.push('# --- Character sprites ---');
   planner.characters.forEach((c, i) => {
-    const color = CHARACTER_PALETTE[i % CHARACTER_PALETTE.length];
     const ident = charIdents.get(c.name)!;
-    lines.push(
-      `image sprite_${ident} = Transform(Solid("${color}"), size=(320, 560))`,
-    );
+    const real = lookupRealAsset(assetRegistry, 'character_main', logicalKeyForCharacter(c.name));
+    if (real) {
+      lines.push(`image sprite_${ident} = "${real}"`);
+    } else {
+      const color = CHARACTER_PALETTE[i % CHARACTER_PALETTE.length];
+      lines.push(
+        `image sprite_${ident} = Transform(Solid("${color}"), size=(320, 560))  # placeholder`,
+      );
+    }
   });
   lines.push('');
   lines.push('# --- Particle placeholder ---');
@@ -294,6 +310,29 @@ function slugToIdent(value: string): string {
   if (ascii.length === 0) return '';
   if (/^[0-9]/.test(ascii)) return `_${ascii}`;
   return ascii;
+}
+
+// ---------------------------------------------------------------------------
+// AssetRegistry lookups (Stage B ↔ Stage A binding)
+// ---------------------------------------------------------------------------
+
+export function logicalKeyForCharacter(name: string): string {
+  return `character:${slugToIdent(name) || 'ch'}:main`;
+}
+
+export function logicalKeyForScene(name: string): string {
+  return `scene:${slugToIdent(name) || 'scene'}:bg`;
+}
+
+function lookupRealAsset(
+  registry: AssetRegistryFile | undefined,
+  assetType: 'character_main' | 'scene_background',
+  logicalKey: string,
+): string | undefined {
+  if (!registry) return undefined;
+  const entry = findByLogicalKey(registry, logicalKey);
+  if (!entry || entry.assetType !== assetType || entry.status !== 'ready') return undefined;
+  return entry.realAssetLocalPath;
 }
 
 function slugifyAscii(value: string): string {

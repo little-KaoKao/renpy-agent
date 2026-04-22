@@ -1,7 +1,7 @@
 # Agentic Galgame 项目计划
 
 > 最后更新:2026-04-22
-> 当前阶段:v0.2 minimal pipeline 已落地(串行 Planner→Writer→Storyboarder→Coder→QA 可 build,Claude 走 Bedrock);v0.3a 启动中(RunningHub client 上线,尚未接入 POC)
+> 当前阶段:v0.2 minimal pipeline + v0.3a/b 骨架已落地;Coder 支持 AssetRegistry 真资产绑定;角色/场景设计师主干接通 RunningHub(真 webappId 待控制台核对)
 
 ---
 
@@ -365,10 +365,16 @@ async function plan() {
 
 **v0.3b —— 角色 / 场景设计师接入(图像路径)**
 
-- [ ] `src/executers/character-designer/` 接入 RunningHub:立绘主图(`悠船文生图-v7`)、表情差分、占位 → 真图切换
-- [ ] `src/executers/scene-designer/` 接入:背景图(`seedream-v5-lite-文生图`)、道具图、时段/光照变体
-- [ ] AssetRegistry 记账 + `swap_asset_placeholder`:Stage B 原地替换 `.rpy` 里的 `image` 定义
-- [ ] 典型修改 e2e:先跑 v0.2 pipeline → 真图 ready → swap → 重跑 `renpy.exe lint` 通过
+- [X] [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts):6 个 AI-App 的 schema 注册表(`webappId`/`promptNodeId` 等字段为 `TODO-` 占位,等控制台核对后覆盖);`isSchemaConfigured` 校验
+- [X] [src/executers/common/run-image-task.ts](src/executers/common/run-image-task.ts):submit+poll 通用 helper(超时 / onProgress / error 回调,测试友好)
+- [X] [src/assets/registry.ts](src/assets/registry.ts) + [src/assets/download.ts](src/assets/download.ts) + [src/assets/swap.ts](src/assets/swap.ts):AssetRegistry JSON 持久化、资产下载到 `<gameDir>/images/...`、`swapAssetPlaceholder` 下载→upsert 一把梭;失败路径用 `markAssetError`
+- [X] [src/executers/character-designer/generate-main-image.ts](src/executers/character-designer/generate-main-image.ts):`generateCharacterMainImage`(立绘主图)
+- [X] [src/executers/scene-designer/generate-background.ts](src/executers/scene-designer/generate-background.ts):`generateSceneBackground`(背景图)
+- [X] Coder 识别 registry:`renderScriptRpy(planner, storyboarder, assetRegistry?)` 有 ready 条目就吐 `image bg_x = "images/..."`,没有就 `Solid(...)` 占位
+- [X] 测试:13 文件 91 用例全绿(新增 36:registry/download/swap/image-task/schemas/char-gen/scene-gen/coder-registry)
+- [ ] RunningHub AI-App schemas 登记真值(登录控制台 → §3.5 表 6 个 AI-App 的 "API 调用" 面板 → 覆盖 `PLACEHOLDER_APP_SCHEMAS`)—— 真跑图/视频前必须做
+- [ ] 表情差分 + 道具图 + 时段/光照变体(用同样的 runImageTask 路径再封 2 个 executer)
+- [ ] 典型修改 e2e 冒烟:跑 v0.2 pipeline → 调 `generateCharacterMainImage` / `generateSceneBackground` → 重渲染 script.rpy → `renpy.exe lint` 通过
 
 **v0.3c —— 分镜师接入(视频路径)**
 

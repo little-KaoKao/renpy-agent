@@ -61,6 +61,67 @@ export {
   RUNNINGHUB_DEFAULT_BASE_URL,
 } from './executers/common/runninghub-client.js';
 
+export {
+  RUNNINGHUB_APP_IDENTITIES,
+  PLACEHOLDER_APP_SCHEMAS,
+  getAppApiId,
+  isSchemaConfigured,
+} from './executers/common/runninghub-schemas.js';
+export type {
+  RunningHubAppKey,
+  RunningHubAppIdentity,
+} from './executers/common/runninghub-schemas.js';
+
+export { runImageTask, RunImageTaskError } from './executers/common/run-image-task.js';
+export type {
+  RunImageTaskParams,
+  RunImageTaskSuccess,
+} from './executers/common/run-image-task.js';
+
+export {
+  loadRegistry,
+  saveRegistry,
+  upsertEntry,
+  findByLogicalKey,
+  findByPlaceholderId,
+  registryPathForGame,
+  computePlaceholderId,
+  ASSET_REGISTRY_FILENAME,
+} from './assets/registry.js';
+export type {
+  AssetRegistryFile,
+  AssetRegistryEntry as RuntimeAssetRegistryEntry,
+  AssetType,
+  AssetStatus,
+} from './assets/registry.js';
+
+export { downloadAsset, inferExtensionFromUrl, slugForFilename } from './assets/download.js';
+export type { DownloadAssetParams, DownloadAssetResult } from './assets/download.js';
+
+export { swapAssetPlaceholder, markAssetError } from './assets/swap.js';
+export type {
+  SwapAssetPlaceholderParams,
+  SwapAssetPlaceholderResult,
+} from './assets/swap.js';
+
+export {
+  generateCharacterMainImage,
+  buildCharacterMainPrompt,
+} from './executers/character-designer/generate-main-image.js';
+export type {
+  GenerateCharacterMainImageParams,
+  GenerateCharacterMainImageResult,
+} from './executers/character-designer/generate-main-image.js';
+
+export {
+  generateSceneBackground,
+  buildSceneBackgroundPrompt,
+} from './executers/scene-designer/generate-background.js';
+export type {
+  GenerateSceneBackgroundParams,
+  GenerateSceneBackgroundResult,
+} from './executers/scene-designer/generate-background.js';
+
 // --- v0.2 minimal pipeline ---
 
 export type {
@@ -97,6 +158,8 @@ export {
   generateGameProject,
   writeGameProject,
   renderScriptRpy,
+  logicalKeyForCharacter,
+  logicalKeyForScene,
 } from './pipeline/coder.js';
 export { runQa, parseLintOutput } from './pipeline/qa.js';
 export { runPipeline, slugifyStoryName } from './pipeline/run-pipeline.js';

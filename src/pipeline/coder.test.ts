@@ -3,9 +3,12 @@ import {
   assignCharacterIdentifiers,
   assignSceneIdentifiers,
   generateGameProject,
+  logicalKeyForCharacter,
+  logicalKeyForScene,
   renderScriptRpy,
 } from './coder.js';
 import type { PlannerOutput, StoryboarderOutput } from './types.js';
+import type { AssetRegistryFile } from '../assets/registry.js';
 
 const PLANNER_FIXTURE: PlannerOutput = {
   projectTitle: '樱花夜',
@@ -157,5 +160,57 @@ describe('generateGameProject', () => {
     expect(files.optionsRpy).not.toContain('{{TITLE}}');
     expect(files.guiRpy.length).toBeGreaterThan(100);
     expect(files.screensRpy.length).toBeGreaterThan(100);
+  });
+});
+
+describe('renderScriptRpy with AssetRegistry (Stage B binding)', () => {
+  it('uses real asset paths when registry has ready entries', () => {
+    const registry: AssetRegistryFile = {
+      version: 1,
+      entries: [
+        {
+          placeholderId: 'pid1',
+          logicalKey: logicalKeyForScene('sakura_night'),
+          assetType: 'scene_background',
+          realAssetLocalPath: 'images/bg/sakura_night.png',
+          remoteAssetUri: 'https://cdn/s.png',
+          status: 'ready',
+          updatedAt: '2026-04-22T00:00:00.000Z',
+        },
+        {
+          placeholderId: 'pid2',
+          logicalKey: logicalKeyForCharacter('白樱'),
+          assetType: 'character_main',
+          realAssetLocalPath: 'images/char/baiying.png',
+          remoteAssetUri: 'https://cdn/c.png',
+          status: 'ready',
+          updatedAt: '2026-04-22T00:00:00.000Z',
+        },
+      ],
+    };
+    const script = renderScriptRpy(PLANNER_FIXTURE, STORYBOARDER_FIXTURE, registry);
+    expect(script).toContain('image bg_sakura_night = "images/bg/sakura_night.png"');
+    expect(script).toMatch(/image sprite_\w+ = "images\/char\/baiying\.png"/);
+    // Scene without a ready asset still falls back to Solid
+    expect(script).toContain('image bg_classroom = Solid(');
+  });
+
+  it('ignores entries whose status != ready', () => {
+    const registry: AssetRegistryFile = {
+      version: 1,
+      entries: [
+        {
+          placeholderId: 'p',
+          logicalKey: logicalKeyForCharacter('白樱'),
+          assetType: 'character_main',
+          realAssetLocalPath: 'images/char/wip.png',
+          remoteAssetUri: 'https://cdn/c.png',
+          status: 'generating',
+          updatedAt: '2026-04-22T00:00:00.000Z',
+        },
+      ],
+    };
+    const script = renderScriptRpy(PLANNER_FIXTURE, STORYBOARDER_FIXTURE, registry);
+    expect(script).not.toContain('images/char/wip.png');
   });
 });
