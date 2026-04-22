@@ -51,32 +51,38 @@
 ```
 <repo-root>/                    # 本仓库根;开发机上就是 E:\RenPy\
 ├── PLAN.md                     # 本文件
-├── README.md                   # 给新开发者的 quickstart(待写)
+├── README.md                   # 新开发者 quickstart
+├── package.json                # pnpm 管理;scripts: build / typecheck
+├── tsconfig.json               # strict / ES2022 / Node16
+├── pnpm-lock.yaml              # 锁定依赖(共享 store 在 D:\pnpm-store)
 ├── .renpy-version              # 钉住 SDK 版本号(纯文本:"8.3.4")
-├── .gitignore                  # 忽略 renpy-*-sdk/, renpy-sdk, runtime/, .env
+├── .gitignore                  # 忽略 renpy-*-sdk/, renpy-sdk, runtime/, .env, dist/
 ├── .env.example                # API key 占位模板;真 .env 不入 git
 │
 ├── scripts/
 │   └── setup-renpy.ps1         # 幂等:无 SDK 则下载解压 + 建 junction
 │
-├── schema/
-│   └── galgame-workspace.ts    # 15 文档 TS schema(待写)
-├── workflows/
-│   └── galgame-workflows.ts    # 7 POC function 签名(待写)
-├── planner/                    # Planner Agent 实现(待写)
-├── executers/                  # 7 位 POC 的 tool 实现(待写)
-│   ├── common/                 # runninghub-client.ts 等跨 POC 共享模块
-│   ├── producer/
-│   ├── writer/
-│   ├── storyboarder/
-│   ├── character-designer/
-│   ├── scene-designer/
-│   ├── coder/
-│   └── qa/
+├── src/                        # 所有 TS 源码(编译后落在 dist/,不入 git)
+│   ├── index.ts                # barrel,re-export 全部公开类型
+│   ├── schema/
+│   │   └── galgame-workspace.ts    # 15 文档 TS schema
+│   ├── workflows/
+│   │   └── galgame-workflows.ts    # 7 POC 的 tool-set 类型契约
+│   ├── planner/
+│   │   └── index.ts                # PlannerTools 类型契约
+│   └── executers/
+│       ├── common/                 # runninghub-client 等跨 POC 共享模块
+│       ├── producer/
+│       ├── writer/
+│       ├── storyboarder/
+│       ├── character-designer/
+│       ├── scene-designer/
+│       ├── coder/
+│       └── qa/
 ├── resources/
 │   └── renpy-storyboard/       # 分镜师 skill 的正式家
 └── docs/
-    ├── 架构文档、设计决策/
+    ├── superpowers/            # 设计 spec + 实施 plan(与本 PLAN.md 配合)
     └── examples/
         └── baiying-demo/       # 手工占位优先 demo(Stage A 可行性 fixture)
             ├── game/           # Ren'Py 标准结构:script.rpy / gui.rpy / ...
@@ -106,7 +112,7 @@
 
 1. `git clone <repo>` → 得到上面 3.1 的内容
 2. `pwsh scripts/setup-renpy.ps1` → 自动下载 SDK 到 `renpy-8.3.4-sdk/` 并建 junction
-3. 装 Node/TS 依赖、`cp .env.example .env` 后填入 `RUNNINGHUB_API_KEY` 和 LLM key
+3. `pnpm install` 装 TS 依赖、`cp .env.example .env` 后填入 `RUNNINGHUB_API_KEY` 和 LLM key
 4. 验证环境:`renpy-sdk/renpy.exe docs/examples/baiying-demo` 应当跑出 8 镜头占位 demo
 5. 跑 agent:喂一段灵感,产出落在 `runtime/games/<story-name>/game/`
 6. 玩产物:`renpy-sdk/renpy.exe runtime/games/<story-name>/game`
@@ -129,7 +135,7 @@
 
 **后端统一走 [RunningHub](https://www.runninghub.cn/) 的 API**,一个 key 管所有图/视频生成。`RUNNINGHUB_API_KEY` 放在仓库根 `.env`,绝对不进 git。
 
-所有 POC 的图 / 视频调用都走 `executers/common/runninghub-client.ts`(待写),不各自散写 HTTP。
+所有 POC 的图 / 视频调用都走 [src/executers/common/runninghub-client.ts](src/executers/common/runninghub-client.ts)(目前只是 interface 契约,运行时实现待 v0.3),不各自散写 HTTP。
 
 | POC             | 资产类型                 | 首选模型                           | 备选 / 特殊用途                                                                      |
 | --------------- | ------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------ |
@@ -309,6 +315,7 @@ async function plan() {
 - [ ] `renpy.input` 默认值里的中文标点 Ren'Py 8.x 兼容性
 - [ ] Planner 选型:沿用 HOGI 的 Gemini 2.5/3.0(依赖 thinking signature),还是切 Claude/GPT?暂定 Gemini。
 - [ ] RunningHub 各模型的**实测产出质量/单价/限流**:目前只定"用哪几个",首选/备选的取舍等真跑过再拍板。
+- [ ] RunningHub OpenAPI 的真实 `webappId` 与输入节点 ID / fieldName:smoke test 只验到握手层,跑图还需登录 RunningHub 控制台看每个 AI-App 的"API 调用"面板核对。
 - [ ] 音频生成(BGM / SFX / 语音):v1 范围外。
 - [ ] galgame 标配 UI(存档点、多路线合流、CG 鉴赏、BGM 鉴赏):v2 范围。
 - [ ] 本仓库何时 `git init` + 首次 push 到 GitHub(当前还是本地工作区)。
@@ -322,10 +329,13 @@ async function plan() {
 - [X] 方案 F 成型(架构文档、员工表)
 - [X] 占位优先 demo 验证([docs/examples/baiying-demo/game/script.rpy](docs/examples/baiying-demo/game/script.rpy))
 - [X] 目录层级就位(agent 仓即 repo root,SDK/runtime/.claude 不入 git)
-- [ ] `workflows/galgame-workflows.ts`:7 位 POC 的 function 签名清单
-- [ ] `schema/galgame-workspace.ts`:15 文档的 TS schema + `dependencies`
-- [ ] `executers/common/runninghub-client.ts` 最小 smoke test:一次文生图跑通 RunningHub 握手
-- [ ] `README.md` + `.gitignore` + `.env.example` + `git init`
+- [X] [src/workflows/galgame-workflows.ts](src/workflows/galgame-workflows.ts):7 位 POC 的 tool-set 类型契约
+- [X] [src/schema/galgame-workspace.ts](src/schema/galgame-workspace.ts):15 文档的 TS schema + `dependencies`
+- [X] [src/executers/common/runninghub-client.ts](src/executers/common/runninghub-client.ts) 接口契约(submit/poll)
+- [X] [src/planner/index.ts](src/planner/index.ts) + [src/index.ts](src/index.ts) barrel
+- [X] `package.json` / `tsconfig.json` / `pnpm-lock.yaml`,`pnpm typecheck` + `pnpm build` 通过
+- [X] `README.md` + `.gitignore` + `.env.example` + `git init` + push 到 GitHub
+- [X] RunningHub 最小 smoke test(文生图握手)—— [scripts/runninghub-smoke.mjs](scripts/runninghub-smoke.mjs) 实测通路:真 key → `code=1 webapp not exists`(认证通过,卡参数),假 key → `code=301 user not exist`,认证 + JSON 通路均 OK。真实 `webappId` 仍需登录 RunningHub 控制台核对,留到 v0.3 封 client 时细化
 
 ### v0.2 最小闭环
 
