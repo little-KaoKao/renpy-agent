@@ -178,3 +178,30 @@ export {
 } from './pipeline/coder.js';
 export { runQa, parseLintOutput } from './pipeline/qa.js';
 export { runPipeline, slugifyStoryName } from './pipeline/run-pipeline.js';
+
+export {
+  saveStoryWorkspace,
+  loadStoryWorkspace,
+  workspacePathsForGame,
+  WORKSPACE_DIRNAME,
+  PLANNER_FILENAME,
+  WRITER_FILENAME,
+  STORYBOARDER_FILENAME,
+} from './pipeline/workspace.js';
+export type {
+  StoryWorkspacePaths,
+  StoryWorkspaceSnapshot,
+} from './pipeline/workspace.js';
+
+export {
+  modifyCharacterAppearance,
+  modifyDialogueLine,
+  reorderShots,
+} from './pipeline/modify.js';
+export type {
+  ModifyCharacterAppearanceParams,
+  ModifyCharacterAppearanceResult,
+  ModifyDialogueLineParams,
+  ReorderShotsParams,
+  ModifyContext,
+} from './pipeline/modify.js';

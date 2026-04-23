@@ -1,7 +1,7 @@
 # Agentic Galgame 项目计划
 
 > 最后更新:2026-04-23
-> 当前阶段:v0.2 minimal pipeline + v0.3a/b 骨架已落地;Coder 支持 AssetRegistry 真资产绑定;角色/场景设计师主干接通 RunningHub(真 webappId 待控制台核对);v0.3c 分镜师视频路径骨架就位(Cutscene 识别字段 + `renpy.movie_cutscene` 渲染 + 视频 executer 占位,真 Vidu/Wan schema 待控制台核对)
+> 当前阶段:v0.2 minimal pipeline + v0.3a/b/c 骨架全部落地;Coder 支持 AssetRegistry 真资产绑定;角色/场景设计师主干接通 RunningHub(真 webappId 待控制台核对);分镜师视频路径骨架就位(`renpy.movie_cutscene` + 视频 executer 占位);v0.4 修改闭环三个典型场景编程接口就位(story workspace 持久化 + modifyCharacterAppearance / modifyDialogueLine / reorderShots)
 
 ---
 
@@ -130,7 +130,7 @@
 | SDK 入口          | 统一走 `renpy-sdk/renpy.exe`                                               | 升版只改 junction 和 `.renpy-version`,agent 代码不变                         |
 | storyboard skill  | 放 `resources/`,junction 到 `.claude/skills/`                            | Claude Code 照常发现,agent 系统也能 import                                     |
 | 游戏产出路径      | `runtime/games/<name>/`,不入 git                                           | 产物 ≠ 源码;想永久保存就让开发者自己 cp 出去另开仓                            |
-| 多项目隔离        | 每游戏独立 `workspace.sqlite` + `planner_memories/` + `logs/`                 | Planner 记忆全局共享会让项目 A 污染项目 B;按目录隔离最简单也最不易错          |
+| 多项目隔离        | 每游戏独立 `workspace.sqlite` + `planner_memories/` + `logs/`          | Planner 记忆全局共享会让项目 A 污染项目 B;按目录隔离最简单也最不易错           |
 | baiying-demo 定位 | `docs/examples/`,作 fixture/回归基准                                       | 它不是 agent 产出,是手工证据;也用来 smoke-test 新开发者的 SDK 安装             |
 | Ren'Py launcher   | 不依赖                                                                       | QA 用命令行 `renpy.exe <game>`,自动化更友好                                  |
 | 音频              | v1 范围外                                                                    | 生成后端未定,手工导入即可                                                      |
@@ -141,18 +141,19 @@
 
 所有 POC 的图 / 视频调用都走 [src/executers/common/runninghub-client.ts](src/executers/common/runninghub-client.ts)(目前只是 interface 契约,运行时实现待 v0.3),不各自散写 HTTP。
 
-| POC             | 资产类型                 | 首选模型                           | 备选 / 特殊用途                                                                      |
-| --------------- | ------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------ |
-| 角色设计师      | 角色立绘主图 / 表情差分  | `悠船文生图-v7`(api-425766740)   | `全能图片V2-文生图-官方稳定版`(api-425766745)做风格兜底                           |
-| 角色设计师      | 动态立绘(呼吸/眨眼/发丝)| `seedance2.0/多模态视频`(api-438555139) | 吃角色立绘主图 + 动作描述,产短循环视频                                           |
-| 场景设计师      | 背景 / 道具静态图        | `seedream-v5-lite-文生图`(api-425766751) | `悠船文生图-v7` 做二选一                                                           |
-| 分镜师          | 片头 / 片尾 / 章节过场 CG| `Vidu-图生视频-q3-pro`(api-425766645)、`万相2.7-图生视频`(api-438555134) | 吃场景设计师产出的"首帧"图 URI                                 |
-| 分镜师          | 关键剧情 CG(吻戏/战斗/死亡) | `Vidu-参考生视频-q3`(api-437377723)、`万相2.7-参考生视频`(api-438555140) | 吃角色 + 场景参考图 URI,保证人物一致性                                    |
-| 分镜师          | 高质量备选 CG            | `seedance2.0-global/图生视频`(api-442994109) | 兜底选型,按产出质量/成本再平衡                                                 |
+| POC        | 资产类型                    | 首选模型                                                                     | 备选 / 特殊用途                                           |
+| ---------- | --------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------- |
+| 角色设计师 | 角色立绘主图 / 表情差分     | `悠船文生图-v7`(api-425766740)                                             | `全能图片V2-文生图-官方稳定版`(api-425766745)做风格兜底 |
+| 角色设计师 | 动态立绘(呼吸/眨眼/发丝)    | `seedance2.0/多模态视频`(api-438555139)                                    | 吃角色立绘主图 + 动作描述,产短循环视频                    |
+| 场景设计师 | 背景 / 道具静态图           | `seedream-v5-lite-文生图`(api-425766751)                                   | `悠船文生图-v7` 做二选一                                |
+| 分镜师     | 片头 / 片尾 / 章节过场 CG   | `Vidu-图生视频-q3-pro`(api-425766645)、`万相2.7-图生视频`(api-438555134) | 吃场景设计师产出的"首帧"图 URI                            |
+| 分镜师     | 关键剧情 CG(吻戏/战斗/死亡) | `Vidu-参考生视频-q3`(api-437377723)、`万相2.7-参考生视频`(api-438555140) | 吃角色 + 场景参考图 URI,保证人物一致性                    |
+| 分镜师     | 高质量备选 CG               | `seedance2.0-global/图生视频`(api-442994109)                               | 兜底选型,按产出质量/成本再平衡                            |
 
 **POC 间的参考图流转**:分镜师调视频模型时**不自产首帧/参考图**,而是把场景设计师的 `sceneUri` 和角色设计师的 `characterUri`(主图)作为参数传入。URI 引用保证 Cutscene 文档不拷贝资产,角色或场景变更后通过 Stage B 原地替换即可。
 
 **接入姿态**:
+
 - "占位 → 真资产"两阶段不变:Stage A 同步返任务 ticket + placeholder uri,Stage B 轮询 RunningHub 产物回写。
 - 视频产物按 Ren'Py `Movie()` / `show movie` 接入;静态图按 `image` + `Transform`。
 
@@ -199,16 +200,16 @@
 
 ### 4.1 Common Tools 术语(沿用 HOGI V5 命名)
 
-| 工具                     | 干什么                                                                   |
-| ------------------------ | ------------------------------------------------------------------------ |
-| `output_with_plan`       | Planner 产出 Plan(TS 伪代码),主循环转入 Executer                      |
-| `output_with_finish`     | 当前 task 收尾,写一句 taskSummary 到 `planner_memories`,丢掉原始消息  |
-| `read_from_uri`          | 按 URI 拉取 workspace 文档详情(懒加载)                                  |
-| `active_workflow`        | Executer 激活某个 workflow(如"角色创建流程"),拉取对应 tool-set        |
-| `handoff_to_agent`       | 切身份:把当前 Executer 切成某位 POC(换 tool-set,不换 prompt)          |
-| `check_workflow_params`  | 校验当前上下文是否满足 workflow 所需参数                                  |
-| `call_task_agent`        | 调用一次性 task agent(如"角色生图词扩写助理"、"角色主图生成助理")    |
-| `get_workflow_guide`     | 读取 workflow 的 guide 文档(场景切换、异常恢复等提示)                  |
+| 工具                      | 干什么                                                                 |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `output_with_plan`      | Planner 产出 Plan(TS 伪代码),主循环转入 Executer                       |
+| `output_with_finish`    | 当前 task 收尾,写一句 taskSummary 到 `planner_memories`,丢掉原始消息 |
+| `read_from_uri`         | 按 URI 拉取 workspace 文档详情(懒加载)                                 |
+| `active_workflow`       | Executer 激活某个 workflow(如"角色创建流程"),拉取对应 tool-set         |
+| `handoff_to_agent`      | 切身份:把当前 Executer 切成某位 POC(换 tool-set,不换 prompt)           |
+| `check_workflow_params` | 校验当前上下文是否满足 workflow 所需参数                               |
+| `call_task_agent`       | 调用一次性 task agent(如"角色生图词扩写助理"、"角色主图生成助理")      |
+| `get_workflow_guide`    | 读取 workflow 的 guide 文档(场景切换、异常恢复等提示)                  |
 
 `call_task_agent` 的那些"xx 助理"是 HOGI 既有的 task agent(小模型 + 专用 prompt),通过该 tool 复用,**不在本仓库 7 位 POC 名册里**。
 
@@ -216,15 +217,15 @@
 
 ## 5. Agent 员工名册(7 位 POC)
 
-| # | 角色            | 拥有的文档                                             | 核心职责                                                                                                                   |
-| - | --------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| 1 | 制作人          | Inspiration(用户入口) / Project / Chapter / Route / Ending | 项目定位、章节骨架、路线/结局总表                                                                                          |
-| 2 | 编剧            | Script(章节级对白)                                     | Chapter outline → 可朗读的场次剧本                                                                                        |
-| 3 | 分镜师          | Storyboard(Shot[]) / Cutscene(视频镜头)                 | Script → 镜头级演出方案;识别需要视频的镜头(过场 CG / 关键剧情 CG),调 RunningHub 视频模型,调用 [resources/renpy-storyboard](resources/renpy-storyboard/SKILL.md) |
-| 4 | 角色设计师      | Character(外观 + 立绘 + 差分 + 可选动态立绘)           | 角色立绘主图 + 表情/动作差分,动态立绘(视频循环)可选,支持占位                                                            |
-| 5 | 场景/道具设计师 | Scene / Prop                                           | 背景图、道具图,含时段/光照变体                                                                                            |
-| 6 | Ren'Py 编码师   | RpyFile / AssetRegistry                                | Storyboard + Cutscene → 能跑的 .rpy;AssetRegistry 跟踪占位 ↔ 真资产映射                                                 |
-| 7 | QA 测试员       | TestRun / BugReport                                    | 跑游戏、抓 bug、定位,产出 BugReport;**不直接改 .rpy**,只 `kick_back_to_coder`                                       |
+| # | 角色            | 拥有的文档                                                 | 核心职责                                                                                                                                                     |
+| - | --------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1 | 制作人          | Inspiration(用户入口) / Project / Chapter / Route / Ending | 项目定位、章节骨架、路线/结局总表                                                                                                                            |
+| 2 | 编剧            | Script(章节级对白)                                         | Chapter outline → 可朗读的场次剧本                                                                                                                          |
+| 3 | 分镜师          | Storyboard(Shot[]) / Cutscene(视频镜头)                    | Script → 镜头级演出方案;识别需要视频的镜头(过场 CG / 关键剧情 CG),调 RunningHub 视频模型,调用[resources/renpy-storyboard](resources/renpy-storyboard/SKILL.md) |
+| 4 | 角色设计师      | Character(外观 + 立绘 + 差分 + 可选动态立绘)               | 角色立绘主图 + 表情/动作差分,动态立绘(视频循环)可选,支持占位                                                                                                 |
+| 5 | 场景/道具设计师 | Scene / Prop                                               | 背景图、道具图,含时段/光照变体                                                                                                                               |
+| 6 | Ren'Py 编码师   | RpyFile / AssetRegistry                                    | Storyboard + Cutscene → 能跑的 .rpy;AssetRegistry 跟踪占位 ↔ 真资产映射                                                                                    |
+| 7 | QA 测试员       | TestRun / BugReport                                        | 跑游戏、抓 bug、定位,产出 BugReport;**不直接改 .rpy**,只 `kick_back_to_coder`                                                                        |
 
 **关键设计选择**:
 
@@ -239,7 +240,7 @@
 
 ## 6. 关键数据模型(草拟 15 文档)
 
-| 文档          | 归属 POC         | 关键 `dependencies`                            |
+| 文档          | 归属 POC         | 关键 `dependencies`                          |
 | ------------- | ---------------- | ---------------------------------------------- |
 | Inspiration   | 制作人(用户入口) | —                                             |
 | Project       | 制作人           | inspirationUri                                 |
@@ -247,9 +248,9 @@
 | Route         | 制作人           | projectUri                                     |
 | Ending        | 制作人           | routeUri                                       |
 | Script        | 编剧             | chapterUri, [characterUri.voiceTag]            |
-| Character     | 角色设计师       | —(动态立绘依赖自身 mainImageUri)            |
+| Character     | 角色设计师       | —(动态立绘依赖自身 mainImageUri)              |
 | Scene         | 场景设计师       | —                                             |
-| Prop          | 场景设计师       | sceneUri(可选)                                |
+| Prop          | 场景设计师       | sceneUri(可选)                                 |
 | Storyboard    | 分镜师           | scriptUri, [characterUri], [sceneUri]          |
 | Cutscene      | 分镜师           | storyboardUri, [characterUri], [sceneUri]      |
 | RpyFile       | 编码师           | storyboardUri, [cutsceneUri], assetRegistryUri |
@@ -306,6 +307,7 @@ async function plan() {
 ```
 
 **说明**:
+
 - `hogi://` 是 HOGI 平台的 URI scheme,本项目沿用。若将来独立部署,可改成 `workspace://`,内部语义不变。
 - `"角色生图词扩写助理"`、`"角色主图生成助理"` 是 HOGI 既有的 task agent(见 §4.1),通过 `call_task_agent` 复用,**不是本仓库 7 位 POC 之一**。
 
@@ -353,7 +355,6 @@ async function plan() {
 - [X] vitest 单元测试 34 个(Coder / QA / CLI / LLM / run-pipeline e2e 用 scripted LLM)
 - [ ] **手动验收**:`node --env-file=.env dist/cli.js "一个樱花树下的告白故事"` 真跑一次 Claude → 产物能被 `renpy.exe` 启动 → 8 镜头占位能看到
 
-
 ### v0.3 资产闭环
 
 **v0.3a(当前)——LLM provider + 资产后端客户端就位**
@@ -388,21 +389,15 @@ async function plan() {
 
 ### v0.4 修改闭环
 
-- [ ] "改角色外观"、"改某句对白"、"重排某镜头"三个典型修改场景稳定
-- [ ] 记忆压缩 + URI 懒加载实测长程 session(>2 小时)不崩
+- [X] Story workspace 持久化:`runPipeline` 结束时把 planner/writer/storyboarder 三份 JSON 落到 `runtime/games/<story>/workspace/`,二次会话可 `loadStoryWorkspace` 拉回(见 [src/pipeline/workspace.ts](src/pipeline/workspace.ts))
+- [X] 改角色外观 [modifyCharacterAppearance](src/pipeline/modify.ts):改 planner.characters[i].visualDescription,AssetRegistry 里该角色 ready 条目回落 placeholder(真资产路径留痕,下轮 Coder 自动 Solid 占位)—— 兑现 PLAN §8 "改短发"样例
+- [X] 改对白 [modifyDialogueLine](src/pipeline/modify.ts):按 shotNumber + lineIndex 精确改一行,planner/writer 不动
+- [X] 重排镜头 [reorderShots](src/pipeline/modify.ts):传 shotNumber 全排列,输出 1-indexed 连续编号,planner/writer 不动
+- [X] 测试:workspace round-trip + 三个修改场景(含注册表回落 / 越界 / 非排列校验),共 +13 用例;全部基于 tmpdir,无需 LLM/HTTP
+- [ ] 三个修改场景接 CLI 子命令(`renpy-agent modify character …` 之类)—— 当前只有编程接口
+- [ ] 记忆压缩 + URI 懒加载实测长程 session(>2 小时)不崩 —— 需要真 Planner 上线后才做得了
 
 ### v1.0
 
 - [ ] 多章节、多路线、多结局
 - [ ] 存档点自动布设
-
----
-
-## 11. 当前下一步候选
-
-本 plan 是当前阶段的落盘,目录层级已就位。下一步行动等用户决定:
-
-1. **按本 plan 写 `workflows/galgame-workflows.ts`**(7 POC 的 function 签名清单)—— 推荐,返工成本小
-2. **按本 plan 写 `schema/galgame-workspace.ts`**(15 文档 + dependencies)—— 更重,workflows 稳了再写更合理
-3. **写 `README.md` + `.gitignore` + `.env.example` 并 `git init`**(让仓库真正可以 clone)
-4. **继续优化本 plan**(补充细节、调整 POC 分工、追加决策)

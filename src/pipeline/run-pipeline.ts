@@ -6,6 +6,7 @@ import { runStoryboarder } from './storyboarder.js';
 import { writeGameProject } from './coder.js';
 import { runQa } from './qa.js';
 import type { PipelineResult } from './types.js';
+import { saveStoryWorkspace } from './workspace.js';
 
 export interface PipelineLogger {
   info(message: string): void;
@@ -44,7 +45,8 @@ export async function runPipeline(params: RunPipelineParams): Promise<PipelineRe
 
   log.info(`[coder] generating .rpy into ${gameDir}...`);
   await writeGameProject({ planner, storyboarder, gameDir });
-  log.info('[coder] done');
+  await saveStoryWorkspace(gameDir, { planner, writer, storyboarder });
+  log.info('[coder] done (workspace snapshot saved)');
 
   log.info('[qa] running renpy lint...');
   const testRun = await runQa({ gamePath: gameDir, repoRoot });
