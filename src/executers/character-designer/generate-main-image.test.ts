@@ -67,7 +67,7 @@ describe('generateCharacterMainImage', () => {
     expect(reloaded.entries[0]!.logicalKey).toBe('character:baiying:main');
     expect(client.submitTask).toHaveBeenCalledWith(
       expect.objectContaining({
-        apiId: 'api-425766740',
+        apiId: 'api-448183249',
         prompt: expect.stringContaining('pink sakura-haired'),
       }),
     );

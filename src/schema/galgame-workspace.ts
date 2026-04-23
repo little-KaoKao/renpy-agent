@@ -6,6 +6,7 @@ export type DocumentKind =
   | 'inspiration' | 'project' | 'chapter' | 'route' | 'ending'
   | 'script' | 'character' | 'scene' | 'prop'
   | 'storyboard' | 'cutscene'
+  | 'bgmTrack' | 'voiceLine' | 'sfx' | 'uiDesign'
   | 'rpyFile' | 'assetRegistry' | 'testRun' | 'bugReport';
 
 export type WorkspaceUri<T extends DocumentKind> = string & { readonly __kind: T };
@@ -86,7 +87,17 @@ export interface Shot {
 
 export interface AssetRegistryEntry {
   readonly placeholderId: string;
-  readonly assetType: 'character' | 'scene' | 'prop' | 'cutscene' | 'expression' | 'timeVariant' | 'dynamicSprite';
+  readonly assetType:
+    | 'character'
+    | 'scene'
+    | 'prop'
+    | 'cutscene'
+    | 'expression'
+    | 'timeVariant'
+    | 'dynamicSprite'
+    | 'bgmTrack'
+    | 'voiceLine'
+    | 'sfx';
   readonly placeholder: PlaceholderInfo;
 }
 
@@ -199,13 +210,98 @@ export interface Cutscene extends BaseDocument<'cutscene'> {
   readonly referenceImageUri?: string;
 }
 
+// --- 音乐总监 (Music Director) ---
+
+/**
+ * BGM 轨道。一般归属到 chapter/route,也可以挂到某 scene 做专属场景音乐。
+ * 依赖:projectUri 必须;chapterUri/routeUri/sceneUri 可选,用于描述"这段音乐服务于谁"。
+ * 资产生成后端:suno(不走 RunningHub,后续单独封 client)。
+ * dependencies: projectUri, (chapterUri | routeUri | sceneUri)
+ */
+export interface BgmTrack extends BaseDocument<'bgmTrack'> {
+  readonly projectUri: WorkspaceUri<'project'>;
+  readonly chapterUri?: WorkspaceUri<'chapter'>;
+  readonly routeUri?: WorkspaceUri<'route'>;
+  readonly sceneUri?: WorkspaceUri<'scene'>;
+  readonly moodTag: string;
+  readonly styleDescription: string;
+  readonly loopable: boolean;
+  readonly audioUri?: string;
+  readonly audioPlaceholder?: PlaceholderInfo;
+}
+
+// --- 配音导演 (Voice Director) ---
+
+/**
+ * 单句对白配音。一行一条,定位到 Script 的 (sceneNumber, lineIndex),
+ * 同时挂 characterUri(决定音色 voiceTag + 语言)。
+ * 资产后端:RunningHub `minimax/speech-2.8-hd`(VOICE_LINE schema)。
+ * dependencies: scriptUri, characterUri
+ */
+export interface VoiceLine extends BaseDocument<'voiceLine'> {
+  readonly scriptUri: WorkspaceUri<'script'>;
+  readonly characterUri: WorkspaceUri<'character'>;
+  readonly sceneNumber: number;
+  readonly lineIndex: number;
+  readonly text: string;
+  readonly voiceTag: string;
+  readonly emotion?: string;
+  readonly audioUri?: string;
+  readonly audioPlaceholder?: PlaceholderInfo;
+}
+
+// --- 音效设计师 (SFX Designer) ---
+
+/**
+ * 单个环境 / 动作音效(门响、脚步、雨、心跳…)。
+ * 触发点落到某个 Shot(shotNumber + 可选 cue),这样分镜师改镜头时音效一起生效。
+ * 资产后端:RunningHub text-to-audio(复用 VOICE_LINE apiId),后续可换独立 TTA。
+ * dependencies: storyboardUri, sceneUri?
+ */
+export interface Sfx extends BaseDocument<'sfx'> {
+  readonly storyboardUri: WorkspaceUri<'storyboard'>;
+  readonly sceneUri?: WorkspaceUri<'scene'>;
+  readonly shotNumber: number;
+  readonly cue: 'enter' | 'action' | 'exit' | 'ambient';
+  readonly description: string;
+  readonly durationMs?: number;
+  readonly audioUri?: string;
+  readonly audioPlaceholder?: PlaceholderInfo;
+}
+
+// --- UI 设计师 (UI Designer) ---
+
+/**
+ * galgame 标配界面草案:存档/读档、对白栏、主菜单、路线选择、CG 鉴赏、BGM 鉴赏。
+ * 本期仅承载 "Ren'Py screens.rpy 补丁" + 视觉 mood,资产(按钮图/背景图)复用 Scene/Prop 生成链。
+ * dependencies: projectUri
+ */
+export interface UiDesign extends BaseDocument<'uiDesign'> {
+  readonly projectUri: WorkspaceUri<'project'>;
+  readonly screen:
+    | 'main_menu'
+    | 'save_load'
+    | 'dialogue'
+    | 'route_branch'
+    | 'cg_gallery'
+    | 'bgm_gallery'
+    | 'preferences';
+  readonly moodTag: string;
+  readonly rpyScreenPatch?: string;
+  readonly previewImageUri?: string;
+}
+
 // --- Ren'Py 编码师 (Coder) ---
 
-/** dependencies: storyboardUri, cutsceneUri[], assetRegistryUri */
+/** dependencies: storyboardUri, cutsceneUri[], assetRegistryUri, bgmTrackUri[], voiceLineUri[], sfxUri[], uiDesignUri[] */
 export interface RpyFile extends BaseDocument<'rpyFile'> {
   readonly storyboardUri: WorkspaceUri<'storyboard'>;
   readonly cutsceneUris: ReadonlyArray<WorkspaceUri<'cutscene'>>;
   readonly assetRegistryUri: WorkspaceUri<'assetRegistry'>;
+  readonly bgmTrackUris?: ReadonlyArray<WorkspaceUri<'bgmTrack'>>;
+  readonly voiceLineUris?: ReadonlyArray<WorkspaceUri<'voiceLine'>>;
+  readonly sfxUris?: ReadonlyArray<WorkspaceUri<'sfx'>>;
+  readonly uiDesignUris?: ReadonlyArray<WorkspaceUri<'uiDesign'>>;
   readonly fileName: string;
   readonly rpyContent: string;
 }
@@ -244,4 +340,5 @@ export type WorkspaceDocument =
   | Inspiration | Project | Chapter | Route | Ending
   | Script | Character | Scene | Prop
   | Storyboard | Cutscene
+  | BgmTrack | VoiceLine | Sfx | UiDesign
   | RpyFile | AssetRegistry | TestRun | BugReport;

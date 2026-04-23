@@ -22,7 +22,10 @@ export type AssetType =
   | 'scene_background'
   | 'scene_time_variant'
   | 'prop'
-  | 'cutscene';
+  | 'cutscene'
+  | 'bgm_track'
+  | 'voice_line'
+  | 'sfx';
 
 export type AssetStatus = 'placeholder' | 'generating' | 'ready' | 'error';
 

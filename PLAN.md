@@ -1,7 +1,7 @@
 # Agentic Galgame 项目计划
 
 > 最后更新:2026-04-23
-> 当前阶段:v0.2 minimal pipeline + v0.3a/b/c 骨架全部落地;Coder 支持 AssetRegistry 真资产绑定;角色/场景设计师主干接通 RunningHub(真 webappId 待控制台核对);分镜师视频路径骨架就位(`renpy.movie_cutscene` + 视频 executer 占位);v0.4 修改闭环三个典型场景编程接口就位(story workspace 持久化 + modifyCharacterAppearance / modifyDialogueLine / reorderShots)
+> 当前阶段:v0.2 minimal pipeline + v0.3a/b/c 骨架全部落地;Coder 支持 AssetRegistry 真资产绑定;角色/场景设计师主干接通 RunningHub(真 webappId 待控制台核对);分镜师视频路径骨架就位(`renpy.movie_cutscene` + 视频 executer 占位);v0.4 修改闭环三个典型场景编程接口就位(story workspace 持久化 + modifyCharacterAppearance / modifyDialogueLine / reorderShots);v0.5 员工扩招骨架落地(音乐总监 / 配音导演 / 音效设计师 / UI 设计师 = 4 位 POC,BgmTrack/VoiceLine/Sfx/UiDesign 4 文档,RunningHub schema 刷新到 api-448183xxx 系列 + 新增 VOICE_LINE/SFX)
 
 ---
 
@@ -141,14 +141,17 @@
 
 所有 POC 的图 / 视频调用都走 [src/executers/common/runninghub-client.ts](src/executers/common/runninghub-client.ts)(目前只是 interface 契约,运行时实现待 v0.3),不各自散写 HTTP。
 
-| POC        | 资产类型                    | 首选模型                                                                     | 备选 / 特殊用途                                           |
-| ---------- | --------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------- |
-| 角色设计师 | 角色立绘主图 / 表情差分     | `悠船文生图-v7`(api-425766740)                                             | `全能图片V2-文生图-官方稳定版`(api-425766745)做风格兜底 |
-| 角色设计师 | 动态立绘(呼吸/眨眼/发丝)    | `seedance2.0/多模态视频`(api-438555139)                                    | 吃角色立绘主图 + 动作描述,产短循环视频                    |
-| 场景设计师 | 背景 / 道具静态图           | `seedream-v5-lite-文生图`(api-425766751)                                   | `悠船文生图-v7` 做二选一                                |
-| 分镜师     | 片头 / 片尾 / 章节过场 CG   | `Vidu-图生视频-q3-pro`(api-425766645)、`万相2.7-图生视频`(api-438555134) | 吃场景设计师产出的"首帧"图 URI                            |
-| 分镜师     | 关键剧情 CG(吻戏/战斗/死亡) | `Vidu-参考生视频-q3`(api-437377723)、`万相2.7-参考生视频`(api-438555140) | 吃角色 + 场景参考图 URI,保证人物一致性                    |
-| 分镜师     | 高质量备选 CG               | `seedance2.0-global/图生视频`(api-442994109)                               | 兜底选型,按产出质量/成本再平衡                            |
+| POC        | 资产类型                    | 首选模型                                              | 备选 / 特殊用途                                              |
+| ---------- | --------------------------- | ----------------------------------------------------- | ------------------------------------------------------------ |
+| 角色设计师 | 角色立绘主图                | `悠船文生图-niji7`(api-448183249)                   | `全能图片V2-文生图-官方稳定版`(api-448183260)做风格兜底   |
+| 角色设计师 | 表情差分                    | `全能图片V2-图生图-官方稳定版`(api-448183224)        | 吃角色立绘主图 + 情绪 hint,产同角色差分                     |
+| 角色设计师 | 动态立绘(呼吸/眨眼/发丝)    | `seedance2.0/多模态视频`(api-448183127)              | 吃角色立绘主图 + 动作描述,产短循环视频                      |
+| 场景设计师 | 背景 / 道具静态图           | `全能图片V2-文生图-官方稳定版`(api-448183260)        | `悠船文生图-niji7`(api-448183249)做二选一                  |
+| 分镜师     | 片头 / 片尾 / 章节过场 CG   | `seedance2.0/图生视频`(api-448183116)                | 吃场景设计师产出的"首帧"图 URI                               |
+| 分镜师     | 关键剧情 CG(吻戏/战斗/死亡) | `seedance2.0/多模态视频`(api-448183127)              | 吃角色 + 场景参考图 URI,保证人物一致性                       |
+| 音乐总监   | BGM 主题 / 章节 / 路线      | `suno`(文档待接入,API 不走 RunningHub,另封 client) | 按 chapterUri / routeUri / sceneUri 差异化                   |
+| 配音导演   | 对白配音                    | `minimax/speech-2.8-hd`(api-448183268)               | 吃 Script.lines + Character.voiceTag,每句一条 VoiceLine     |
+| 音效设计师 | 环境音 / 动作音             | `minimax/speech-2.8-hd`(api-448183268,复用)        | 短音效 / 环境音,按 Shot + cue 触发;后续可换独立 TTA         |
 
 **POC 间的参考图流转**:分镜师调视频模型时**不自产首帧/参考图**,而是把场景设计师的 `sceneUri` 和角色设计师的 `characterUri`(主图)作为参数传入。URI 引用保证 Cutscene 文档不拷贝资产,角色或场景变更后通过 Stage B 原地替换即可。
 
@@ -215,17 +218,21 @@
 
 ---
 
-## 5. Agent 员工名册(7 位 POC)
+## 5. Agent 员工名册(11 位 POC)
 
-| # | 角色            | 拥有的文档                                                 | 核心职责                                                                                                                                                     |
-| - | --------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1 | 制作人          | Inspiration(用户入口) / Project / Chapter / Route / Ending | 项目定位、章节骨架、路线/结局总表                                                                                                                            |
-| 2 | 编剧            | Script(章节级对白)                                         | Chapter outline → 可朗读的场次剧本                                                                                                                          |
-| 3 | 分镜师          | Storyboard(Shot[]) / Cutscene(视频镜头)                    | Script → 镜头级演出方案;识别需要视频的镜头(过场 CG / 关键剧情 CG),调 RunningHub 视频模型,调用[resources/renpy-storyboard](resources/renpy-storyboard/SKILL.md) |
-| 4 | 角色设计师      | Character(外观 + 立绘 + 差分 + 可选动态立绘)               | 角色立绘主图 + 表情/动作差分,动态立绘(视频循环)可选,支持占位                                                                                                 |
-| 5 | 场景/道具设计师 | Scene / Prop                                               | 背景图、道具图,含时段/光照变体                                                                                                                               |
-| 6 | Ren'Py 编码师   | RpyFile / AssetRegistry                                    | Storyboard + Cutscene → 能跑的 .rpy;AssetRegistry 跟踪占位 ↔ 真资产映射                                                                                    |
-| 7 | QA 测试员       | TestRun / BugReport                                        | 跑游戏、抓 bug、定位,产出 BugReport;**不直接改 .rpy**,只 `kick_back_to_coder`                                                                        |
+| #  | 角色            | 拥有的文档                                                 | 核心职责                                                                                                                                                             |
+| -- | --------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1  | 制作人          | Inspiration(用户入口) / Project / Chapter / Route / Ending | 项目定位、章节骨架、路线/结局总表                                                                                                                                    |
+| 2  | 编剧            | Script(章节级对白)                                         | Chapter outline → 可朗读的场次剧本                                                                                                                                  |
+| 3  | 分镜师          | Storyboard(Shot[]) / Cutscene(视频镜头)                    | Script → 镜头级演出方案;识别需要视频的镜头(过场 CG / 关键剧情 CG),调 RunningHub 视频模型,调用 [resources/renpy-storyboard](resources/renpy-storyboard/SKILL.md) |
+| 4  | 角色设计师      | Character(外观 + 立绘 + 差分 + 可选动态立绘)               | 角色立绘主图 + 表情/动作差分,动态立绘(视频循环)可选,支持占位                                                                                                     |
+| 5  | 场景/道具设计师 | Scene / Prop                                               | 背景图、道具图,含时段/光照变体                                                                                                                                       |
+| 6  | 音乐总监        | BgmTrack                                                   | 章节 / 路线 / 场景级 BGM;走 suno 生成,占位→真音替换与视觉资产同一套 AssetRegistry                                                                                   |
+| 7  | 配音导演        | VoiceLine                                                  | 按 Script (sceneNumber,lineIndex) 逐句配音;voiceTag 继承 Character,支持回忆/破防等场合临时覆写;走 RunningHub `minimax/speech-2.8-hd`                             |
+| 8  | 音效设计师      | Sfx                                                        | 门响 / 脚步 / 心跳 / 雨声等环境音与动作音,按 Shot + cue(enter/action/exit/ambient) 触发;后端暂复用 `minimax/speech-2.8-hd`,后续换独立 TTA                        |
+| 9  | UI 设计师       | UiDesign                                                   | 存档 / 读档 / 对白栏 / 路线分支 / CG 鉴赏 / BGM 鉴赏界面的 `screens.rpy` 补丁与视觉 mood                                                                            |
+| 10 | Ren'Py 编码师   | RpyFile / AssetRegistry                                    | Storyboard + Cutscene + Bgm/Voice/Sfx/UI → 能跑的 .rpy;AssetRegistry 跟踪占位 ↔ 真资产映射                                                                          |
+| 11 | QA 测试员       | TestRun / BugReport                                        | 跑游戏、抓 bug、定位,产出 BugReport;**不直接改 .rpy**,只 `kick_back_to_coder`                                                                                  |
 
 **关键设计选择**:
 
@@ -234,29 +241,34 @@
 - **QA 不能写 .rpy**,只能 `kick_back_to_coder` —— 真工作室分工,避免单一事实来源碎掉。
 - 角色 / 场景设计师都内建**占位优先**:同步返回 Solid 占位 uri,异步排真生成。
 - **视频类资产**(片头/片尾/章节过场 CG、关键剧情 CG)由**分镜师**统一 own(Cutscene 文档),参考图从角色/场景设计师的 URI 拉取;动态立绘归**角色设计师**(Character 文档扩展字段)。详见 §3.5。
-- 音频资产(BGM / SFX / 语音)**本期不做生成**,仅占位 + 手工导入。未来可扩"音乐设计师"POC。
+- **音频资产**(BGM / 对白 / SFX)v0.5 起纳入生成管线,三位 POC 各管一类:BGM 走 suno(独立 client),对白/SFX 走 RunningHub TTS。占位阶段 Ren'Py 端可直接 `play music/voice/sound <占位 ogg>` 或整段省略,Stage B 原地替换。
+- **UI 设计师**归属于 v0.5 扩员;v0.2~v0.4 产出的 .rpy 先用 Ren'Py 默认 `screens.rpy`,UI 设计师在后续版本开始生成替换补丁。
 
 ---
 
-## 6. 关键数据模型(草拟 15 文档)
+## 6. 关键数据模型(草拟 19 文档)
 
-| 文档          | 归属 POC         | 关键 `dependencies`                          |
-| ------------- | ---------------- | ---------------------------------------------- |
-| Inspiration   | 制作人(用户入口) | —                                             |
-| Project       | 制作人           | inspirationUri                                 |
-| Chapter       | 制作人           | projectUri                                     |
-| Route         | 制作人           | projectUri                                     |
-| Ending        | 制作人           | routeUri                                       |
-| Script        | 编剧             | chapterUri, [characterUri.voiceTag]            |
-| Character     | 角色设计师       | —(动态立绘依赖自身 mainImageUri)              |
-| Scene         | 场景设计师       | —                                             |
-| Prop          | 场景设计师       | sceneUri(可选)                                 |
-| Storyboard    | 分镜师           | scriptUri, [characterUri], [sceneUri]          |
-| Cutscene      | 分镜师           | storyboardUri, [characterUri], [sceneUri]      |
-| RpyFile       | 编码师           | storyboardUri, [cutsceneUri], assetRegistryUri |
-| AssetRegistry | 编码师           | rpyFileUri                                     |
-| TestRun       | QA               | rpyFileUri                                     |
-| BugReport     | QA               | testRunUri                                     |
+| 文档          | 归属 POC         | 关键 `dependencies`                                                              |
+| ------------- | ---------------- | -------------------------------------------------------------------------------- |
+| Inspiration   | 制作人(用户入口) | —                                                                               |
+| Project       | 制作人           | inspirationUri                                                                   |
+| Chapter       | 制作人           | projectUri                                                                       |
+| Route         | 制作人           | projectUri                                                                       |
+| Ending        | 制作人           | routeUri                                                                         |
+| Script        | 编剧             | chapterUri, [characterUri.voiceTag]                                              |
+| Character     | 角色设计师       | —(动态立绘依赖自身 mainImageUri)                                                |
+| Scene         | 场景设计师       | —                                                                               |
+| Prop          | 场景设计师       | sceneUri(可选)                                                                   |
+| Storyboard    | 分镜师           | scriptUri, [characterUri], [sceneUri]                                            |
+| Cutscene      | 分镜师           | storyboardUri, [characterUri], [sceneUri]                                        |
+| BgmTrack      | 音乐总监         | projectUri, (chapterUri \| routeUri \| sceneUri)                                 |
+| VoiceLine     | 配音导演         | scriptUri, characterUri                                                          |
+| Sfx           | 音效设计师       | storyboardUri, sceneUri?                                                         |
+| UiDesign      | UI 设计师        | projectUri                                                                       |
+| RpyFile       | 编码师           | storyboardUri, [cutsceneUri], assetRegistryUri, [bgmTrackUri/voiceLineUri/sfxUri/uiDesignUri] |
+| AssetRegistry | 编码师           | rpyFileUri                                                                       |
+| TestRun       | QA               | rpyFileUri                                                                       |
+| BugReport     | QA               | testRunUri                                                                       |
 
 **`dependencies` 的要害**:所有跨文档引用用 **URI 引用**,不复制数据。
 比如 Storyboard 引用 `characterUri`,不引用 `character.mainImageUri` —— **角色立绘换了,分镜无感,`.rpy` 也无感**。这正是"改短发"场景不需要重跑剧本/分镜/代码的根据。
@@ -396,6 +408,20 @@ async function plan() {
 - [X] 测试:workspace round-trip + 三个修改场景(含注册表回落 / 越界 / 非排列校验),共 +13 用例;全部基于 tmpdir,无需 LLM/HTTP
 - [ ] 三个修改场景接 CLI 子命令(`renpy-agent modify character …` 之类)—— 当前只有编程接口
 - [ ] 记忆压缩 + URI 懒加载实测长程 session(>2 小时)不崩 —— 需要真 Planner 上线后才做得了
+
+### v0.5 员工扩招(音频 + UI 骨架)
+
+- [X] `.env` 补齐 AWS Bedrock 三件套(`CLAUDE_CODE_USE_BEDROCK`/`AWS_REGION`/`AWS_BEARER_TOKEN_BEDROCK`),LLM 链路可以真跑
+- [X] RunningHub schema 迁到 `api-448183xxx` 系列(旧 `api-42xxxx` / `api-43xxxx` 全作废);新增 `VOICE_LINE` / `SFX` 两个 AppKey(共用 minimax/speech-2.8-hd 的 apiId);`CHARACTER_DYNAMIC_SPRITE` 与 `CUTSCENE_REFERENCE_VIDEO` 合并共用 seedance2.0 多模态 apiId 条目
+- [X] 4 个新文档 schema([src/schema/galgame-workspace.ts](src/schema/galgame-workspace.ts):`BgmTrack` / `VoiceLine` / `Sfx` / `UiDesign`),`DocumentKind` / `WorkspaceDocument` 联合类型同步扩
+- [X] 4 位新 POC tool-set 契约([src/workflows/galgame-workflows.ts](src/workflows/galgame-workflows.ts):`MusicDirectorTools` / `VoiceDirectorTools` / `SfxDesignerTools` / `UiDesignerTools`);`PocRole` 扩到 11 人;[src/index.ts](src/index.ts) 同步 barrel
+- [X] 运行时 `AssetRegistry.AssetType` 扩:`bgm_track` / `voice_line` / `sfx`
+- [ ] RunningHub 控制台抄真 `webappId` / `promptNodeId` / `promptFieldName`(7 个 AppKey,含新 `VOICE_LINE`)—— 这一条过关后,整条"占位 → 真资产"链条才能真跑
+- [ ] 配音导演 executer:`generate-voice-line.ts` 走 `runImageTask`(submit+poll 逻辑一致,只改产物扩展名为 `.mp3` / `.ogg`),产物落 `voice/scene_<N>/line_<i>.ogg`,Coder 在对白行前插 `voice "voice/..."`
+- [ ] 音效设计师 executer:`generate-sfx.ts`,产物落 `audio/sfx/shot_<N>_<cue>.ogg`,Coder 按 cue 映射到 Shot 头/尾的 `play sound` 语句
+- [ ] 音乐总监 executer:`generate-bgm-track.ts` 走 suno(独立 client,不复用 RunningHub),产物落 `audio/bgm/<slug>.ogg`,Coder 在进入 Scene/Chapter/Route 时插 `play music "audio/bgm/..."`
+- [ ] UI 设计师 executer:`generate-ui-patch.ts` 走 LLM(不走 RunningHub),按 `screen` 枚举产出 `screens.rpy` 补丁,Coder merge 到最终 .rpy
+- [ ] Pipeline 接线:`runPipeline` 在 Coder 前多跑 4 步(按"单章节前 N 句对白 / N 个镜头 / 1 条 BGM / 1 套主菜单 UI"的最小集合)
 
 ### v1.0
 

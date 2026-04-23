@@ -92,7 +92,7 @@ describe('generateCutsceneVideo', () => {
     expect(reloaded.entries[0]!.logicalKey).toBe('cutscene:shot_2');
     expect(client.submitTask).toHaveBeenCalledWith(
       expect.objectContaining({
-        apiId: 'api-425766645', // CUTSCENE_IMAGE_TO_VIDEO
+        apiId: 'api-448183116', // CUTSCENE_IMAGE_TO_VIDEO (seedance2.0/图生视频)
         referenceImageUri: 'https://cdn/scene-first-frame.jpg',
       }),
     );
@@ -128,7 +128,7 @@ describe('generateCutsceneVideo', () => {
 
     expect(result.entry.realAssetLocalPath).toBe('videos/cut/shot_7.mp4');
     expect(client.submitTask).toHaveBeenCalledWith(
-      expect.objectContaining({ apiId: 'api-437377723' }), // CUTSCENE_REFERENCE_VIDEO
+      expect.objectContaining({ apiId: 'api-448183127' }), // CUTSCENE_REFERENCE_VIDEO (seedance2.0/多模态视频)
     );
   });
 

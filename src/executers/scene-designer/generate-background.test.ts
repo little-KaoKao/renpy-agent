@@ -64,7 +64,7 @@ describe('generateSceneBackground', () => {
     const reloaded = await loadRegistry(registryPath);
     expect(reloaded.entries[0]!.assetType).toBe('scene_background');
     expect(client.submitTask).toHaveBeenCalledWith(
-      expect.objectContaining({ apiId: 'api-425766751' }),
+      expect.objectContaining({ apiId: 'api-448183260' }),
     );
   });
 });

@@ -11,6 +11,10 @@ import type {
   Character,
   Scene,
   Prop,
+  BgmTrack,
+  VoiceLine,
+  Sfx,
+  UiDesign,
   RpyFile,
   AssetRegistry,
   TestRun,
@@ -30,6 +34,10 @@ export type PocRole =
   | 'storyboarder'
   | 'character-designer'
   | 'scene-designer'
+  | 'music-director'
+  | 'voice-director'
+  | 'sfx-designer'
+  | 'ui-designer'
   | 'coder'
   | 'qa';
 
@@ -230,7 +238,113 @@ export interface SceneDesignerTools {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Ren'Py 编码师 (Coder) tool-set
+// 6. 音乐总监 (Music Director) tool-set
+// ---------------------------------------------------------------------------
+
+export interface MusicDirectorTools {
+  create_bgm_track(params: {
+    readonly projectUri: WorkspaceUri<'project'>;
+    readonly chapterUri?: WorkspaceUri<'chapter'>;
+    readonly routeUri?: WorkspaceUri<'route'>;
+    readonly sceneUri?: WorkspaceUri<'scene'>;
+    readonly moodTag: string;
+    readonly styleDescription: string;
+    readonly loopable: boolean;
+  }): Promise<BgmTrack>;
+
+  update_bgm_track(params: {
+    readonly bgmTrackUri: WorkspaceUri<'bgmTrack'>;
+    readonly updates: Partial<Pick<BgmTrack, 'moodTag' | 'styleDescription' | 'loopable'>>;
+  }): Promise<BgmTrack>;
+
+  /** 触发 suno 等后端产出音频;返回占位(status=generating),真资产异步回写。 */
+  generate_bgm_audio(params: {
+    readonly bgmTrackUri: WorkspaceUri<'bgmTrack'>;
+  }): Promise<PlaceholderInfo>;
+}
+
+// ---------------------------------------------------------------------------
+// 7. 配音导演 (Voice Director) tool-set
+// ---------------------------------------------------------------------------
+
+export interface VoiceDirectorTools {
+  /**
+   * 按 Script 的 (sceneNumber, lineIndex) 精确配一句。voiceTag 默认继承
+   * Character.voiceTag,调用者可临时覆写(比如回忆桥段换少女音)。
+   */
+  create_voice_line(params: {
+    readonly scriptUri: WorkspaceUri<'script'>;
+    readonly characterUri: WorkspaceUri<'character'>;
+    readonly sceneNumber: number;
+    readonly lineIndex: number;
+    readonly text: string;
+    readonly voiceTag?: string;
+    readonly emotion?: string;
+  }): Promise<VoiceLine>;
+
+  update_voice_line(params: {
+    readonly voiceLineUri: WorkspaceUri<'voiceLine'>;
+    readonly updates: Partial<Pick<VoiceLine, 'text' | 'voiceTag' | 'emotion'>>;
+  }): Promise<VoiceLine>;
+
+  generate_voice_audio(params: {
+    readonly voiceLineUri: WorkspaceUri<'voiceLine'>;
+  }): Promise<PlaceholderInfo>;
+
+  /** 整本 Script 一键配音:循环 create + generate;单句失败不整体失败,返回成功率。 */
+  voice_all_lines(params: {
+    readonly scriptUri: WorkspaceUri<'script'>;
+  }): Promise<{ readonly created: number; readonly failed: number }>;
+}
+
+// ---------------------------------------------------------------------------
+// 8. 音效设计师 (SFX Designer) tool-set
+// ---------------------------------------------------------------------------
+
+export interface SfxDesignerTools {
+  create_sfx(params: {
+    readonly storyboardUri: WorkspaceUri<'storyboard'>;
+    readonly sceneUri?: WorkspaceUri<'scene'>;
+    readonly shotNumber: number;
+    readonly cue: 'enter' | 'action' | 'exit' | 'ambient';
+    readonly description: string;
+    readonly durationMs?: number;
+  }): Promise<Sfx>;
+
+  update_sfx(params: {
+    readonly sfxUri: WorkspaceUri<'sfx'>;
+    readonly updates: Partial<Pick<Sfx, 'cue' | 'description' | 'durationMs'>>;
+  }): Promise<Sfx>;
+
+  generate_sfx_audio(params: {
+    readonly sfxUri: WorkspaceUri<'sfx'>;
+  }): Promise<PlaceholderInfo>;
+}
+
+// ---------------------------------------------------------------------------
+// 9. UI 设计师 (UI Designer) tool-set
+// ---------------------------------------------------------------------------
+
+export interface UiDesignerTools {
+  create_ui_design(params: {
+    readonly projectUri: WorkspaceUri<'project'>;
+    readonly screen: UiDesign['screen'];
+    readonly moodTag: string;
+  }): Promise<UiDesign>;
+
+  update_ui_design(params: {
+    readonly uiDesignUri: WorkspaceUri<'uiDesign'>;
+    readonly updates: Partial<Pick<UiDesign, 'moodTag' | 'rpyScreenPatch' | 'previewImageUri'>>;
+  }): Promise<UiDesign>;
+
+  /** 让 UI 设计师基于 moodTag + screen 生成 Ren'Py screen 代码补丁(走 LLM)。 */
+  generate_rpy_screen_patch(params: {
+    readonly uiDesignUri: WorkspaceUri<'uiDesign'>;
+  }): Promise<UiDesign>;
+}
+
+// ---------------------------------------------------------------------------
+// 10. Ren'Py 编码师 (Coder) tool-set
 // ---------------------------------------------------------------------------
 
 export interface CoderTools {
@@ -253,7 +367,7 @@ export interface CoderTools {
 }
 
 // ---------------------------------------------------------------------------
-// 7. QA 测试员 tool-set
+// 11. QA 测试员 tool-set
 // ---------------------------------------------------------------------------
 
 export interface QaTools {

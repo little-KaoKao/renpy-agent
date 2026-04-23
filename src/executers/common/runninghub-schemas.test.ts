@@ -7,7 +7,7 @@ import {
 } from './runninghub-schemas.js';
 
 describe('runninghub-schemas registry', () => {
-  it('covers all six AI-App keys from PLAN §3.5', () => {
+  it('covers all eight AI-App keys from PLAN §3.5', () => {
     const keys = Object.keys(RUNNINGHUB_APP_IDENTITIES).sort();
     expect(keys).toEqual(
       [
@@ -17,18 +17,31 @@ describe('runninghub-schemas registry', () => {
         'SCENE_BACKGROUND',
         'CUTSCENE_IMAGE_TO_VIDEO',
         'CUTSCENE_REFERENCE_VIDEO',
+        'VOICE_LINE',
+        'SFX',
       ].sort(),
     );
   });
 
   it('getAppApiId returns the apiId from identity registry', () => {
-    expect(getAppApiId('CHARACTER_MAIN_IMAGE')).toBe('api-425766740');
+    expect(getAppApiId('CHARACTER_MAIN_IMAGE')).toBe('api-448183249');
+    expect(getAppApiId('VOICE_LINE')).toBe('api-448183268');
   });
 
-  it('every app has a placeholder schema entry', () => {
+  it('every app has a placeholder schema entry (direct or shared)', () => {
     for (const identity of Object.values(RUNNINGHUB_APP_IDENTITIES)) {
       expect(PLACEHOLDER_APP_SCHEMAS[identity.apiId]).toBeDefined();
     }
+  });
+
+  it('dynamic-sprite and reference-video share a single schema entry', () => {
+    expect(getAppApiId('CHARACTER_DYNAMIC_SPRITE')).toBe(
+      getAppApiId('CUTSCENE_REFERENCE_VIDEO'),
+    );
+  });
+
+  it('voice-line and sfx share a single schema entry', () => {
+    expect(getAppApiId('VOICE_LINE')).toBe(getAppApiId('SFX'));
   });
 
   it('all placeholder schemas are flagged unconfigured', () => {
