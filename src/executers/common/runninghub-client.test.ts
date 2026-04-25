@@ -5,6 +5,7 @@ import {
   type AiAppSchema,
   type FetchLike,
 } from './runninghub-client.js';
+import { RUNNINGHUB_APP_SCHEMAS } from './runninghub-schemas.js';
 
 const FAKE_KEY = 'fake-key';
 
@@ -128,6 +129,38 @@ describe('HttpRunningHubClient.submitTask', () => {
       { nodeId: '1', fieldName: 'real_person_mode', fieldValue: 'false' },
       { nodeId: '1', fieldName: 'prompt', fieldValue: 'dolly in' },
     ]);
+  });
+
+  it('wires real RUNNINGHUB_APP_SCHEMAS fieldData through to nodeInfoList (Midjourney v7 end-to-end)', async () => {
+    // 用真 schema 做一次端到端:caller 只提供 prompt,Midjourney v7 的
+    // model_selected / aspect_rate 两个下拉字段应当带回官方枚举 fieldData。
+    const { fetchFn, calls } = makeFetch({
+      '/openapi/v2/run/ai-app/': () => ({
+        json: { taskId: 'mj-1', status: 'RUNNING', errorCode: '', errorMessage: '' },
+      }),
+    });
+    const client = new HttpRunningHubClient({
+      apiKey: FAKE_KEY,
+      appSchemas: RUNNINGHUB_APP_SCHEMAS as unknown as Record<string, AiAppSchema>,
+      fetchFn,
+    });
+
+    await client.submitTask({
+      appKey: 'CHARACTER_MAIN_IMAGE',
+      inputs: [{ role: 'prompt', value: 'a cat on the moon' }],
+    });
+
+    const body = calls[0]!.body;
+    const modelField = body.nodeInfoList.find(
+      (n: any) => n.nodeId === '4' && n.fieldName === 'model_selected',
+    );
+    const aspectField = body.nodeInfoList.find(
+      (n: any) => n.nodeId === '4' && n.fieldName === 'aspect_rate',
+    );
+    expect(modelField.fieldData).toMatch(/Midjourney V7/);
+    expect(modelField.fieldValue).toBe('Midjourney V7');
+    expect(aspectField.fieldData).toMatch(/9:16/);
+    expect(aspectField.fieldValue).toBe('3:4');
   });
 
   it('emits fieldData when the schema declares an enum whitelist', async () => {
@@ -330,6 +363,34 @@ describe('HttpRunningHubClient.pollTask', () => {
     const res = await client.pollTask('t1');
     expect(res.status).toBe('error');
     expect(res.errorMessage).toBe('prompt blocked');
+  });
+
+  it('surfaces structured failedReason (node_name + exception_message) on outputs code=805', async () => {
+    const { fetchFn } = makeFetch({
+      '/task/openapi/status': () => ({ json: { code: 0, data: 'SUCCESS' } }),
+      '/task/openapi/outputs': () => ({
+        json: {
+          code: 805,
+          msg: 'failed',
+          data: {
+            failedReason: {
+              node_name: 'KSampler',
+              exception_message: 'CUDA out of memory',
+              traceback: 'Traceback (most recent call last): ...',
+            },
+          },
+        },
+      }),
+    });
+    const client = new HttpRunningHubClient({
+      apiKey: FAKE_KEY,
+      appSchemas: TEST_SCHEMAS,
+      fetchFn,
+    });
+    const res = await client.pollTask('t1');
+    expect(res.status).toBe('error');
+    expect(res.errorMessage).toContain('KSampler');
+    expect(res.errorMessage).toContain('CUDA out of memory');
   });
 
   it('returns error when SUCCESS but outputs envelope has no fileUrl', async () => {
