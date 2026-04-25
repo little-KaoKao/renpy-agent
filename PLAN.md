@@ -418,11 +418,19 @@ async function plan() {
 - [X] 4 位新 POC tool-set 契约([src/workflows/galgame-workflows.ts](src/workflows/galgame-workflows.ts):`MusicDirectorTools` / `VoiceDirectorTools` / `SfxDesignerTools` / `UiDesignerTools`);`PocRole` 扩到 11 人;[src/index.ts](src/index.ts) 同步 barrel
 - [X] 运行时 `AssetRegistry.AssetType` 扩:`bgm_track` / `voice_line` / `sfx`
 - [X] RunningHub 控制台核对真 `webappId` + node 布局,8 个 AppKey 的 schema 全部登记真值(`isSchemaConfigured` 全返 true)—— 这一条过关后,整条"占位 → 真资产"链条才能真跑;下一步是真 key smoke test(跑一次 Midjourney v7 文生图 → poll → 拿 URL)
-- [ ] 配音导演 executer:`generate-voice-line.ts` 走 `runImageTask`(submit+poll 逻辑一致,只改产物扩展名为 `.mp3` / `.ogg`),产物落 `voice/scene_<N>/line_<i>.ogg`,Coder 在对白行前插 `voice "voice/..."`
-- [ ] 音效设计师 executer:`generate-sfx.ts`,产物落 `audio/sfx/shot_<N>_<cue>.ogg`,Coder 按 cue 映射到 Shot 头/尾的 `play sound` 语句
-- [ ] 音乐总监 executer:`generate-bgm-track.ts` 走 RunningHub SunoV5(`BGM_TRACK` AppKey,webappId `1972977443998928898`),产物落 `audio/bgm/<slug>.ogg`,Coder 在进入 Scene/Chapter/Route 时插 `play music "audio/bgm/..."`
-- [ ] UI 设计师 executer:`generate-ui-patch.ts` 走 LLM(不走 RunningHub),按 `screen` 枚举产出 `screens.rpy` 补丁,Coder merge 到最终 .rpy
-- [ ] Pipeline 接线:`runPipeline` 在 Coder 前多跑 4 步(按"单章节前 N 句对白 / N 个镜头 / 1 条 BGM / 1 套主菜单 UI"的最小集合)
+- [X] 配音导演 executer:[src/executers/voice-director/generate-voice-line.ts](src/executers/voice-director/generate-voice-line.ts) 走 `runImageTask`,产物落 `audio/voice/scene_<N>/line_<i>.<ext>`,Coder 在对白行前插 `voice "audio/voice/..."`
+- [X] 音效设计师 executer:[src/executers/sfx-designer/generate-sfx.ts](src/executers/sfx-designer/generate-sfx.ts),产物落 `audio/sfx/shot_<N>_<cue>.<ext>`,Coder 按 cue 映射到 Shot 头 `play sound` 语句(enter cue only in v0.5)
+- [X] 音乐总监 executer:[src/executers/music-director/generate-bgm-track.ts](src/executers/music-director/generate-bgm-track.ts) 走 RunningHub SunoV5(`BGM_TRACK` AppKey,webappId `1972977443998928898`),产物落 `audio/bgm/<slug>.<ext>`,Coder 在进入 Scene 时插 `play music "audio/bgm/..."`
+- [X] UI 设计师 executer:[src/executers/ui-designer/generate-ui-patch.ts](src/executers/ui-designer/generate-ui-patch.ts) 走 LLM(不走 RunningHub),按 `screen` 枚举产出 `screens.rpy` 补丁,Coder merge 到最终 .rpy
+- [X] Pipeline 接线:[src/pipeline/audio-ui.ts](src/pipeline/audio-ui.ts) 在 Coder 前跑 4 组任务(按"每 scene 一条 BGM / 首场景前 5 句 voice / 关键词触发的 SFX / main_menu UI"最小集合);[src/pipeline/audio-ui.test.ts](src/pipeline/audio-ui.test.ts) 4 用例覆盖 plan → batch → partial-failure
+- [X] 真 key 端到端 smoke:`--audio-ui` 跑通,产物落 `runtime/games/smoke-audio-ui/game/`,`renpy.exe --lint` pass,BGM mp3/flac 真实播放
+- [X] Bedrock 默认模型改为 `us.anthropic.claude-sonnet-4-6` inference profile(on-demand throughput 模型需要 profile ID,不接受裸 model ID)
+- [X] RunningHub outputs 输出选择器:SunoV5 会把 `.txt` prompt metadata 排在 data[0],按 `fileType` 白名单跳过 metadata,挑第一个真实音频/图/视频([src/executers/common/runninghub-client.ts](src/executers/common/runninghub-client.ts) `pickPrimaryOutputUri`)
+- [X] audio-ui stage 中 BGM/Voice/SFX 三组串行,避免并发写同一 `asset-registry.json` 引发 race(UI 不碰 registry,仍和 RunningHub 组并发)
+- [X] Stage A 默认资产包:[src/templates/gui/](src/templates/gui/)(17 个 PNG 来自 baiying-demo)+ `SourceHanSansLite.ttf` 字体,[src/pipeline/coder.ts](src/pipeline/coder.ts) `copyTemplateBinaries` 在 writeGameProject 时递归拷贝到 `game/`;没有这些二进制 Ren'Py 主菜单首帧会崩
+- [X] [scripts/copy-templates.mjs](scripts/copy-templates.mjs) 改为递归镜像,支持子目录(`gui/bar/` `gui/button/` 等),build 产物 84 文件
+- [X] `config.window_icon` 在 [src/templates/options.rpy](src/templates/options.rpy) 中默认注释(启动不阻塞;有真图标再启用)
+- [X] 启动验证:`renpy-sdk/renpy.exe runtime/games/smoke-audio-ui` 在 NVIDIA GL2 渲染器上稳定运行 20s+,无 traceback;3 条真 FLAC BGM 被 `play music` 引用,main_menu UI patch merge 到 screens.rpy
 
 ### v1.0
 
