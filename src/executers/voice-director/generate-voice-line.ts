@@ -4,7 +4,10 @@
 // schema 在 nodeId=7/select=1 + nodeId=6/select=1 两条固定 option 之上,吃两条
 // 自由文本:`voice_text`(音色描述 / Character.voiceTag)和 `line_text`(台词)。
 //
-// Ren'Py 端:Coder 在 dialogue 之前插 `voice "audio/voice/scene_<N>/line_<i>.<ext>"`。
+// Ren'Py 端:Coder 在 dialogue 之前插 `voice "audio/voice/shot_<N>/line_<i>.<ext>"`。
+// key 按 Storyboarder 的 (shotNumber, shotLineIndex) —— Coder 渲染 shot 时按 shot
+// 内的 dialogue 顺序回查,天然不错位。之前按 Writer 的 (sceneNumber, lineIndex)
+// 编号,Storyboarder 压缩丢句时会让语音和画面错位。
 
 import type {
   AiAppNodeInput,
@@ -18,7 +21,7 @@ import type { AssetRegistryEntry } from '../../assets/registry.js';
 import { logicalKeyForVoiceLine } from '../../assets/logical-key.js';
 
 export interface GenerateVoiceLineParams {
-  readonly sceneNumber: number;
+  readonly shotNumber: number;
   readonly lineIndex: number;
   readonly text: string;
   readonly voiceTag: string;
@@ -42,7 +45,7 @@ const DEFAULT_VOICE_TIMEOUT_MS = 3 * 60 * 1000;
 export async function generateVoiceLine(
   params: GenerateVoiceLineParams,
 ): Promise<GenerateVoiceLineResult> {
-  const logicalKey = logicalKeyForVoiceLine(params.sceneNumber, params.lineIndex);
+  const logicalKey = logicalKeyForVoiceLine(params.shotNumber, params.lineIndex);
   const inputs: AiAppNodeInput[] = [
     { role: 'voice_text', value: params.voiceTag },
     { role: 'line_text', value: params.text },
@@ -60,7 +63,7 @@ export async function generateVoiceLine(
 
     const ext = inferExtensionFromUrl(task.outputUri);
     const targetRelativePath =
-      `audio/voice/scene_${params.sceneNumber}/line_${params.lineIndex}${ext}`;
+      `audio/voice/shot_${params.shotNumber}/line_${params.lineIndex}${ext}`;
     const swap = await swapAssetPlaceholder({
       gameDir: params.gameDir,
       registryPath: params.registryPath,

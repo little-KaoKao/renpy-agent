@@ -63,7 +63,7 @@ export interface BgmSnapshotEntry {
 }
 
 export interface VoiceSnapshotEntry {
-  readonly sceneNumber: number;
+  readonly shotNumber: number;
   readonly lineIndex: number;
   readonly speaker: string;
   readonly text: string;
@@ -123,6 +123,60 @@ export async function saveStoryWorkspace(
     writeJson(paths.storyboarderPath, snapshot.storyboarder),
   ]);
   return paths;
+}
+
+/** Save a single stage output — lets pipeline persist incrementally instead of waiting for all three. */
+export async function savePlannerSnapshot(gameDir: string, planner: PlannerOutput): Promise<string> {
+  const paths = workspacePathsForGame(gameDir);
+  await mkdir(paths.workspaceDir, { recursive: true });
+  await writeJson(paths.plannerPath, planner);
+  return paths.plannerPath;
+}
+
+export async function saveWriterSnapshot(gameDir: string, writer: WriterOutput): Promise<string> {
+  const paths = workspacePathsForGame(gameDir);
+  await mkdir(paths.workspaceDir, { recursive: true });
+  await writeJson(paths.writerPath, writer);
+  return paths.writerPath;
+}
+
+export async function saveStoryboarderSnapshot(
+  gameDir: string,
+  storyboarder: StoryboarderOutput,
+): Promise<string> {
+  const paths = workspacePathsForGame(gameDir);
+  await mkdir(paths.workspaceDir, { recursive: true });
+  await writeJson(paths.storyboarderPath, storyboarder);
+  return paths.storyboarderPath;
+}
+
+/** Load whichever stage snapshots exist. Missing files → undefined, not an error. */
+export async function tryLoadStageSnapshots(gameDir: string): Promise<{
+  planner?: PlannerOutput;
+  writer?: WriterOutput;
+  storyboarder?: StoryboarderOutput;
+}> {
+  const paths = workspacePathsForGame(gameDir);
+  const [planner, writer, storyboarder] = await Promise.all([
+    tryReadJson<PlannerOutput>(paths.plannerPath),
+    tryReadJson<WriterOutput>(paths.writerPath),
+    tryReadJson<StoryboarderOutput>(paths.storyboarderPath),
+  ]);
+  const out: { planner?: PlannerOutput; writer?: WriterOutput; storyboarder?: StoryboarderOutput } = {};
+  if (planner) out.planner = planner;
+  if (writer) out.writer = writer;
+  if (storyboarder) out.storyboarder = storyboarder;
+  return out;
+}
+
+async function tryReadJson<T>(path: string): Promise<T | undefined> {
+  try {
+    const text = await readFile(path, 'utf8');
+    return JSON.parse(text) as T;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw e;
+  }
 }
 
 export async function loadStoryWorkspace(gameDir: string): Promise<StoryWorkspaceSnapshot> {

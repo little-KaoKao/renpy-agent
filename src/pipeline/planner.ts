@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import type { LlmClient } from '../llm/types.js';
 import { extractJsonBlock } from '../llm/claude-client.js';
+import { retryJsonParse } from '../llm/retry.js';
+import { wrapParseError } from '../llm/stage-parse-error.js';
 import type { PlannerOutput } from './types.js';
 
 const PLANNER_SYSTEM_TEMPLATE = `You are the Planner for a galgame production pipeline.
@@ -57,19 +59,29 @@ export async function runPlanner(params: RunPlannerParams): Promise<PlannerOutpu
   const schema = await loadSchema();
   const system = PLANNER_SYSTEM_TEMPLATE.replace('{{SCHEMA}}', schema);
 
-  const res = await params.llm.chat({
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: `INSPIRATION:\n${params.inspiration}` },
-    ],
-    temperature: 0.7,
-    maxTokens: 4096,
+  return retryJsonParse({
+    attempt: async () => {
+      const res = await params.llm.chat({
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: `INSPIRATION:\n${params.inspiration}` },
+        ],
+        temperature: 0.7,
+        maxTokens: 4096,
+      });
+      try {
+        const json = extractJsonBlock(res.content);
+        const parsed = JSON.parse(json) as PlannerOutput;
+        assertPlannerOutput(parsed);
+        return parsed;
+      } catch (e) {
+        throw wrapParseError(e, res.content);
+      }
+    },
+    onRetry: (err, attempt) => {
+      console.warn(`[planner] attempt ${attempt} produced invalid output (${err.message}); retrying...`);
+    },
   });
-
-  const json = extractJsonBlock(res.content);
-  const parsed = JSON.parse(json) as PlannerOutput;
-  assertPlannerOutput(parsed);
-  return parsed;
 }
 
 function assertPlannerOutput(value: unknown): asserts value is PlannerOutput {

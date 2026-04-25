@@ -21,6 +21,8 @@ export type ParsedCliCommand =
       readonly inspiration: string;
       readonly storyName?: string;
       readonly audioUi?: boolean;
+      readonly cutscene?: boolean;
+      readonly resume?: boolean;
     }
   | {
       readonly kind: 'modify';
@@ -68,11 +70,17 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
 function parseGenerateArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
   let storyName: string | undefined;
   let audioUi = false;
+  let cutscene = false;
+  let resume = false;
   const positional: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === '--audio-ui') {
       audioUi = true;
+    } else if (arg === '--cutscene') {
+      cutscene = true;
+    } else if (arg === '--resume') {
+      resume = true;
     } else if (arg === '--name') {
       const next = argv[i + 1];
       if (!next) throw new Error('--name requires a value');
@@ -88,6 +96,8 @@ function parseGenerateArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
   const result: ParsedCliCommand = { kind: 'generate', inspiration };
   if (storyName !== undefined) (result as { storyName?: string }).storyName = storyName;
   if (audioUi) (result as { audioUi?: boolean }).audioUi = true;
+  if (cutscene) (result as { cutscene?: boolean }).cutscene = true;
+  if (resume) (result as { resume?: boolean }).resume = true;
   return result;
 }
 
@@ -205,7 +215,7 @@ function parseOrderFlag(flags: FlagMap, context: string): ReadonlyArray<number> 
 }
 
 const HELP_TEXT = `Usage:
-  renpy-agent generate [--name <slug>] [--audio-ui] <inspiration text>
+  renpy-agent generate [--name <slug>] [--audio-ui] [--cutscene] <inspiration text>
   renpy-agent modify character <story> --name <name> --visual "..." [--rebuild]
   renpy-agent modify dialogue  <story> --shot <N> --line <i> --text "..." [--rebuild]
   renpy-agent modify shots     <story> --order 3,1,2,4,5,6,7,8 [--rebuild]
@@ -213,19 +223,27 @@ const HELP_TEXT = `Usage:
   renpy-agent -h | --help
 
 Legacy form (still supported):
-  renpy-agent [--name <slug>] [--audio-ui] <inspiration text>
+  renpy-agent [--name <slug>] [--audio-ui] [--cutscene] [--resume] <inspiration text>
 
 Options:
   --name <slug>   Story folder name (defaults to "story-YYYYMMDD-HHMMSS")
   --audio-ui      Enable v0.5 audio + UI stage (BGM / voice / SFX / main_menu patch).
                   Requires RUNNINGHUB_API_KEY in the environment.
                   Equivalent env flag: RENPY_AGENT_AUDIO_UI=1 (CLI flag wins).
+  --cutscene      Auto-route storyboarder shot.cutscene entries to Seedance2.0
+                  image-to-video. Requires RUNNINGHUB_API_KEY. Reference first-frames
+                  are pulled from already-ready scene/character assets in the registry;
+                  shots without a ready reference fall back to the Stage A placeholder.
+  --resume        Reuse any planner.json / writer.json / storyboarder.json that
+                  already exists under the story's workspace dir and skip those
+                  LLM stages. Lets you recover from a mid-pipeline failure
+                  without re-burning tokens on stages that already succeeded.
   --rebuild       After a modify, regenerate script.rpy and run QA.
   -h, --help      Show this help
 
 Environment:
   ANTHROPIC_API_KEY    required for generate (loaded from .env via "node --env-file=.env ...")
-  RUNNINGHUB_API_KEY   required when --audio-ui is enabled
+  RUNNINGHUB_API_KEY   required when --audio-ui or --cutscene is enabled
 `;
 
 export async function main(argv: ReadonlyArray<string>): Promise<number> {
@@ -260,12 +278,14 @@ async function runGenerate(cmd: GenerateCommand): Promise<number> {
   const llm = new ClaudeLlmClient();
 
   const enableAudioUi = cmd.audioUi ?? process.env.RENPY_AGENT_AUDIO_UI === '1';
+  const enableCutscene = cmd.cutscene ?? process.env.RENPY_AGENT_CUTSCENE === '1';
   let runningHubClient: RunningHubClient | undefined;
-  if (enableAudioUi) {
+  if (enableAudioUi || enableCutscene) {
     const rhKey = process.env.RUNNINGHUB_API_KEY;
     if (!rhKey) {
+      const flag = enableAudioUi ? '--audio-ui' : '--cutscene';
       console.error(
-        'Error: --audio-ui requires RUNNINGHUB_API_KEY to be set in the environment.',
+        `Error: ${flag} requires RUNNINGHUB_API_KEY to be set in the environment.`,
       );
       return 1;
     }
@@ -281,6 +301,8 @@ async function runGenerate(cmd: GenerateCommand): Promise<number> {
       storyName,
       llm,
       enableAudioUi,
+      enableCutscene,
+      ...(cmd.resume ? { resume: true } : {}),
       ...(runningHubClient !== undefined ? { runningHubClient } : {}),
     });
     console.log(`\n✅ Done. Game at: ${result.gamePath}`);
@@ -292,6 +314,12 @@ async function runGenerate(cmd: GenerateCommand): Promise<number> {
           `voice ${s.voice.ok}/${s.voice.ok + s.voice.err}, ` +
           `sfx ${s.sfx.ok}/${s.sfx.ok + s.sfx.err}, ` +
           `ui ${s.ui.ok}/${s.ui.ok + s.ui.err}`,
+      );
+    }
+    if (result.cutscene) {
+      const c = result.cutscene;
+      console.log(
+        `   cutscene: ok ${c.ok}, err ${c.err}, skipped ${c.skipped}`,
       );
     }
     return result.testRun.result === 'fail' ? 2 : 0;

@@ -52,7 +52,11 @@ const STORYBOARDER: StoryboarderOutput = {
       transforms: 'stand',
       transition: 'fade',
       effects: 'gentle wind through the branches',
-      dialogueLines: [{ speaker: 'Hana', text: 'Can you hear me?' }],
+      dialogueLines: [
+        { speaker: 'narrator', text: 'The wind hushes.' },
+        { speaker: 'Hana', text: 'Can you hear me?' },
+        { speaker: 'Kai', text: 'Yes.' },
+      ],
     },
     {
       shotNumber: 2,
@@ -190,29 +194,33 @@ describe('runAudioUiStage', () => {
     expect(result.stats.voice.ok).toBe(0);
     expect(result.stats.sfx).toEqual({ ok: 1, err: 0 });
     expect(result.stats.ui).toEqual({ ok: 1, err: 0 });
-    expect(errorLog.some((m) => m.includes('voice failed for scene_1'))).toBe(true);
+    expect(errorLog.some((m) => m.includes('voice failed for shot_1'))).toBe(true);
   });
 
-  it('respects a 5-line voice budget even when the writer scene has more lines', async () => {
+  it('respects a 5-line voice budget even when the storyboard has more shots/lines', async () => {
     const llm = new ScriptedLlm(['screen main_menu():\n    tag menu']);
-    const longScene: WriterOutput = {
-      scenes: [
-        {
-          location: 'garden',
-          characters: ['Hana'],
-          lines: Array.from({ length: 12 }, (_, i) => ({
-            speaker: 'Hana',
-            text: `line ${i}`,
-          })),
-        },
-      ],
+    const longBoard: StoryboarderOutput = {
+      shots: Array.from({ length: 4 }, (_, i) => ({
+        shotNumber: i + 1,
+        description: `shot ${i + 1}`,
+        characters: ['Hana'],
+        sceneName: 'garden',
+        staging: 'enter',
+        transforms: 'stand',
+        transition: 'none',
+        dialogueLines: [
+          { speaker: 'Hana', text: `a ${i}` },
+          { speaker: 'Hana', text: `b ${i}` },
+          { speaker: 'Hana', text: `c ${i}` },
+        ],
+      })),
     };
     const client = makeRunningHub();
     const errLog: string[] = [];
     const result = await runAudioUiStage({
       planner: PLANNER,
-      writer: longScene,
-      storyboarder: STORYBOARDER,
+      writer: WRITER,
+      storyboarder: longBoard,
       gameDir,
       registryPath,
       runningHubClient: client,

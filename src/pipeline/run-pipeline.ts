@@ -1,15 +1,31 @@
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { LlmClient } from '../llm/types.js';
 import type { RunningHubClient } from '../executers/common/runninghub-client.js';
 import { loadRegistry, registryPathForGame } from '../assets/registry.js';
+import { StageParseError } from '../llm/stage-parse-error.js';
+import type {
+  PlannerOutput,
+  StoryboarderOutput,
+  WriterOutput,
+} from './types.js';
 import { runPlanner } from './planner.js';
 import { runWriter } from './writer.js';
 import { runStoryboarder } from './storyboarder.js';
 import { writeGameProject } from './coder.js';
 import { runQa } from './qa.js';
 import type { PipelineResult } from './types.js';
-import { saveAudioUiWorkspace, saveStoryWorkspace } from './workspace.js';
+import {
+  saveAudioUiWorkspace,
+  saveStoryWorkspace,
+  savePlannerSnapshot,
+  saveWriterSnapshot,
+  saveStoryboarderSnapshot,
+  tryLoadStageSnapshots,
+  workspacePathsForGame,
+} from './workspace.js';
 import { runAudioUiStage, type AudioUiStageStats } from './audio-ui.js';
+import { runCutsceneStage, type CutsceneStageStats } from './cutscene-stage.js';
 
 export interface PipelineLogger {
   info(message: string): void;
@@ -33,7 +49,22 @@ export interface RunPipelineParams {
    * Defaults to false (byte-identical to v0.4 behaviour).
    */
   readonly enableAudioUi?: boolean;
+  /**
+   * v0.5+: when true, auto-route `storyboarder.shots[*].cutscene` to
+   * `generateCutsceneVideo`. Runs after audio-ui (so audio assets are already
+   * in the registry) and before Coder. Requires `runningHubClient`. Individual
+   * failures don't collapse the pipeline — Coder falls back to the black-screen
+   * placeholder for shots without a ready cutscene.
+   */
+  readonly enableCutscene?: boolean;
   readonly runningHubClient?: RunningHubClient;
+  /**
+   * When true, reuse whichever stage snapshots already exist under
+   * `workspace/` (planner.json / writer.json / storyboarder.json) and skip
+   * those LLM stages. Useful to recover from a mid-pipeline failure without
+   * re-burning tokens on already-successful stages.
+   */
+  readonly resume?: boolean;
 }
 
 export async function runPipeline(params: RunPipelineParams): Promise<PipelineResult> {
@@ -41,17 +72,50 @@ export async function runPipeline(params: RunPipelineParams): Promise<PipelineRe
   const repoRoot = params.repoRoot ?? process.cwd();
   const gameDir = resolve(repoRoot, 'runtime', 'games', params.storyName, 'game');
 
-  log.info(`[planner] planning for "${params.storyName}"...`);
-  const planner = await runPlanner({ inspiration: params.inspiration, llm: params.llm });
-  log.info(`[planner] project="${planner.projectTitle}" chars=${planner.characters.length} scenes=${planner.scenes.length}`);
+  const resumed = params.resume ? await tryLoadStageSnapshots(gameDir) : {};
 
-  log.info('[writer] drafting script...');
-  const writer = await runWriter({ planner, llm: params.llm });
-  log.info(`[writer] wrote ${writer.scenes.length} script scenes`);
+  let planner: PlannerOutput;
+  if (resumed.planner) {
+    planner = resumed.planner;
+    log.info(
+      `[planner] RESUMED from workspace (project="${planner.projectTitle}" chars=${planner.characters.length} scenes=${planner.scenes.length})`,
+    );
+  } else {
+    log.info(`[planner] planning for "${params.storyName}"...`);
+    planner = await runStageWithRawDump('planner', gameDir, log, () =>
+      runPlanner({ inspiration: params.inspiration, llm: params.llm }),
+    );
+    await savePlannerSnapshot(gameDir, planner);
+    log.info(
+      `[planner] project="${planner.projectTitle}" chars=${planner.characters.length} scenes=${planner.scenes.length} (snapshot saved)`,
+    );
+  }
 
-  log.info('[storyboarder] condensing into shots...');
-  const storyboarder = await runStoryboarder({ planner, writer, llm: params.llm });
-  log.info(`[storyboarder] produced ${storyboarder.shots.length} shots`);
+  let writer: WriterOutput;
+  if (resumed.writer) {
+    writer = resumed.writer;
+    log.info(`[writer] RESUMED from workspace (${writer.scenes.length} scenes)`);
+  } else {
+    log.info('[writer] drafting script...');
+    writer = await runStageWithRawDump('writer', gameDir, log, () =>
+      runWriter({ planner, llm: params.llm }),
+    );
+    await saveWriterSnapshot(gameDir, writer);
+    log.info(`[writer] wrote ${writer.scenes.length} script scenes (snapshot saved)`);
+  }
+
+  let storyboarder: StoryboarderOutput;
+  if (resumed.storyboarder) {
+    storyboarder = resumed.storyboarder;
+    log.info(`[storyboarder] RESUMED from workspace (${storyboarder.shots.length} shots)`);
+  } else {
+    log.info('[storyboarder] condensing into shots...');
+    storyboarder = await runStageWithRawDump('storyboarder', gameDir, log, () =>
+      runStoryboarder({ planner, writer, llm: params.llm }),
+    );
+    await saveStoryboarderSnapshot(gameDir, storyboarder);
+    log.info(`[storyboarder] produced ${storyboarder.shots.length} shots (snapshot saved)`);
+  }
 
   let audioUiStats: AudioUiStageStats | undefined;
   let uiPatches: ReadonlyArray<{ readonly screen: string; readonly patch: string }> = [];
@@ -84,9 +148,28 @@ export async function runPipeline(params: RunPipelineParams): Promise<PipelineRe
     });
   }
 
+  let cutsceneStats: CutsceneStageStats | undefined;
+  if (params.enableCutscene) {
+    if (!params.runningHubClient) {
+      throw new Error(
+        'runPipeline: enableCutscene=true requires runningHubClient. ' +
+          'Pass an HttpRunningHubClient (or mock) via RunPipelineParams.runningHubClient.',
+      );
+    }
+    log.info('[cutscene] auto-routing shot.cutscene to Seedance2.0...');
+    const stage = await runCutsceneStage({
+      storyboarder,
+      gameDir,
+      registryPath: registryPathForGame(gameDir),
+      runningHubClient: params.runningHubClient,
+      logger: log,
+    });
+    cutsceneStats = stage.stats;
+  }
+
   log.info(`[coder] generating .rpy into ${gameDir}...`);
-  // Reload the registry so Coder sees audio assets the stage just produced.
-  const assetRegistry = params.enableAudioUi
+  // Reload the registry so Coder sees audio / cutscene assets the stages just produced.
+  const assetRegistry = params.enableAudioUi || params.enableCutscene
     ? await loadRegistry(registryPathForGame(gameDir))
     : undefined;
   await writeGameProject({
@@ -115,7 +198,40 @@ export async function runPipeline(params: RunPipelineParams): Promise<PipelineRe
     storyboarder,
     testRun,
     ...(audioUiStats !== undefined ? { audioUi: audioUiStats } : {}),
+    ...(cutsceneStats !== undefined ? { cutscene: cutsceneStats } : {}),
   };
+}
+
+/**
+ * Run a stage fn. If it throws a StageParseError (or anything carrying a
+ * `rawResponse`), dump the LLM's raw text to `workspace/debug/<stage>-raw-<ts>.txt`
+ * so we can diagnose without re-burning tokens. Non-parse errors (network / SDK)
+ * pass through untouched.
+ */
+async function runStageWithRawDump<T>(
+  stage: 'planner' | 'writer' | 'storyboarder',
+  gameDir: string,
+  log: PipelineLogger,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof StageParseError) {
+      try {
+        const paths = workspacePathsForGame(gameDir);
+        const debugDir = resolve(paths.workspaceDir, 'debug');
+        await mkdir(debugDir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const path = resolve(debugDir, `${stage}-raw-${stamp}.txt`);
+        await writeFile(path, e.rawResponse, 'utf8');
+        log.error(`[${stage}] raw response dumped to ${path}`);
+      } catch (dumpErr) {
+        log.error(`[${stage}] raw dump failed: ${String((dumpErr as Error).message)}`);
+      }
+    }
+    throw e;
+  }
 }
 
 export function slugifyStoryName(raw: string | undefined, now: Date = new Date()): string {

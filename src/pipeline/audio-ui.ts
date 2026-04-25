@@ -2,7 +2,10 @@
 //
 // 最小集合(为了证明闭环,不做全量生成):
 //   - BGM:每个 scene 一条,描述取 scene.description。
-//   - Voice:第一场景的前 5 句对白(跳过 narrator)。
+//   - Voice:按 Storyboarder shot 顺序取前 5 句非 narrator 对白。key 用
+//     (shotNumber, shotLineIndex) —— 和 Coder 渲染时的索引一致,
+//     不会因 Storyboarder 压缩丢句而错位。之前是按 Writer 前 5 句走
+//     (sceneNumber, lineIndex),Storyboarder 不保留 Writer 序号就会错位。
 //   - SFX:每个 shot 的 enter cue,仅当 shot.effects 包含 door/footsteps/wind 等关键词。
 //   - UI:只生成 main_menu 一个 screen。
 //
@@ -82,7 +85,7 @@ export async function runAudioUiStage(
   const log = params.logger ?? silentLogger;
 
   const bgmPlan = planBgmTracks(params.planner);
-  const voicePlan = planVoiceLines(params.writer, params.planner, params.voiceTagDefault);
+  const voicePlan = planVoiceLines(params.storyboarder, params.planner, params.voiceTagDefault);
   const sfxPlan = planSfxCues(params.storyboarder);
   const uiPlan = planUiPatches(params.planner, params.uiMoodTag);
 
@@ -141,14 +144,11 @@ function planBgmTracks(planner: PlannerOutput) {
 }
 
 function planVoiceLines(
-  writer: WriterOutput,
+  storyboarder: StoryboarderOutput,
   planner: PlannerOutput,
   defaultTag?: string,
 ) {
   const fallbackTag = defaultTag ?? DEFAULT_VOICE_TAG;
-  // Find the first scene with any non-narrator lines.
-  const firstScene = writer.scenes[0];
-  if (!firstScene) return [];
   const voiceTagByChar = new Map<string, string>();
   for (const c of planner.characters) {
     // PlannerOutputCharacter has no voiceTag field in v0.5 — fall back to a
@@ -157,23 +157,28 @@ function planVoiceLines(
   }
 
   const plan: Array<{
-    sceneNumber: number;
+    shotNumber: number;
     lineIndex: number;
     speaker: string;
     text: string;
     voiceTag: string;
   }> = [];
-  const sceneNumber = 1;
-  for (let i = 0; i < firstScene.lines.length && plan.length < VOICE_LINE_BUDGET; i++) {
-    const line = firstScene.lines[i]!;
-    if (line.speaker === 'narrator') continue;
-    plan.push({
-      sceneNumber,
-      lineIndex: i,
-      speaker: line.speaker,
-      text: line.text,
-      voiceTag: voiceTagByChar.get(line.speaker) ?? fallbackTag,
-    });
+  // Walk shots in storyboard order; pick the first VOICE_LINE_BUDGET non-narrator
+  // lines. Key by (shotNumber, shotLineIndex) so Coder's shot-based rendering
+  // finds the right voice asset regardless of how Storyboarder compressed Writer.
+  outer: for (const shot of storyboarder.shots) {
+    for (let i = 0; i < shot.dialogueLines.length; i++) {
+      if (plan.length >= VOICE_LINE_BUDGET) break outer;
+      const line = shot.dialogueLines[i]!;
+      if (line.speaker === 'narrator') continue;
+      plan.push({
+        shotNumber: shot.shotNumber,
+        lineIndex: i,
+        speaker: line.speaker,
+        text: line.text,
+        voiceTag: voiceTagByChar.get(line.speaker) ?? fallbackTag,
+      });
+    }
   }
   return plan;
 }
@@ -237,7 +242,7 @@ async function runBgmBatch(
 
 async function runVoiceBatch(
   plan: ReadonlyArray<{
-    sceneNumber: number;
+    shotNumber: number;
     lineIndex: number;
     speaker: string;
     text: string;
@@ -251,7 +256,7 @@ async function runVoiceBatch(
   for (const item of plan) {
     try {
       await generateVoiceLine({
-        sceneNumber: item.sceneNumber,
+        shotNumber: item.shotNumber,
         lineIndex: item.lineIndex,
         text: item.text,
         voiceTag: item.voiceTag,
@@ -266,7 +271,7 @@ async function runVoiceBatch(
     } catch (e) {
       err++;
       log.error(
-        `[audio-ui] voice failed for scene_${item.sceneNumber}:line_${item.lineIndex}: ${asMessage(e)}`,
+        `[audio-ui] voice failed for shot_${item.shotNumber}:line_${item.lineIndex}: ${asMessage(e)}`,
       );
     }
   }

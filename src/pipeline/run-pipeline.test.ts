@@ -196,6 +196,83 @@ describe('runPipeline', () => {
     }
   });
 
+  it('saves stage snapshots incrementally so a later failure does not discard earlier work', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'renpy-inc-'));
+    try {
+      // Feed a bad storyboarder response twice so runStoryboarder exhausts retries.
+      const llm = new ScriptedLlm([
+        wrapJson(PLANNER_JSON),
+        wrapJson(WRITER_JSON),
+        '```json\n{ not valid json\n```',
+        '```json\n{ still not valid\n```',
+      ]);
+
+      await expect(
+        runPipeline({
+          inspiration: 'x',
+          storyName: 'inc-story',
+          llm,
+          repoRoot: tmp,
+          logger: { info: () => {}, error: () => {} },
+        }),
+      ).rejects.toThrow();
+
+      const workspaceDir = resolve(tmp, 'runtime/games/inc-story/workspace');
+      const plannerJson = JSON.parse(await readFile(resolve(workspaceDir, 'planner.json'), 'utf8'));
+      expect(plannerJson.projectTitle).toBe('Test Night');
+      const writerJson = JSON.parse(await readFile(resolve(workspaceDir, 'writer.json'), 'utf8'));
+      expect(writerJson.scenes).toHaveLength(1);
+      // Storyboarder never succeeded → no storyboarder.json.
+      await expect(readFile(resolve(workspaceDir, 'storyboarder.json'), 'utf8')).rejects.toThrow();
+      // Raw response was dumped for diagnosis.
+      const { readdir } = await import('node:fs/promises');
+      const debugFiles = await readdir(resolve(workspaceDir, 'debug'));
+      expect(debugFiles.some((f) => f.startsWith('storyboarder-raw-'))).toBe(true);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('resume=true skips stages whose snapshots already exist', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'renpy-resume-'));
+    try {
+      // First run: seed planner + writer snapshots via a failing storyboarder.
+      const firstLlm = new ScriptedLlm([
+        wrapJson(PLANNER_JSON),
+        wrapJson(WRITER_JSON),
+        '```json\n{ not json\n```',
+        '```json\n{ not json\n```',
+      ]);
+      await expect(
+        runPipeline({
+          inspiration: 'x',
+          storyName: 'resume-story',
+          llm: firstLlm,
+          repoRoot: tmp,
+          logger: { info: () => {}, error: () => {} },
+        }),
+      ).rejects.toThrow();
+      // planner + writer were called; storyboarder attempted twice (retry).
+      expect(firstLlm.calls).toHaveLength(4);
+
+      // Second run with resume=true: only storyboarder should be called.
+      const secondLlm = new ScriptedLlm([wrapJson(STORYBOARDER_JSON)]);
+      const result = await runPipeline({
+        inspiration: 'x',
+        storyName: 'resume-story',
+        llm: secondLlm,
+        repoRoot: tmp,
+        logger: { info: () => {}, error: () => {} },
+        resume: true,
+      });
+      expect(secondLlm.calls).toHaveLength(1);
+      expect(result.planner.projectTitle).toBe('Test Night');
+      expect(result.storyboarder.shots).toHaveLength(1);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('throws when enableAudioUi is set but runningHubClient is missing', async () => {
     const llm = new ScriptedLlm([wrapJson(PLANNER_JSON), wrapJson(WRITER_JSON), wrapJson(STORYBOARDER_JSON)]);
     await expect(

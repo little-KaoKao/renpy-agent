@@ -258,11 +258,6 @@ function renderMainLabel(
 ): string {
   const lines: string[] = ['label start:'];
   let activeScene: string | null = null;
-  // Track sceneNumber across non-cutscene shots so voice lines can be keyed by
-  // (sceneNumber, lineIndex) against the registry written by Voice Director.
-  // v0.5 convention: sceneNumber increments on each scene change (1-indexed),
-  // cutscenes reset activeScene (so the next scene-change re-triggers BGM too).
-  let sceneNumber = 0;
 
   for (const shot of storyboarder.shots) {
     lines.push('');
@@ -289,7 +284,7 @@ function renderMainLabel(
         const line = shot.dialogueLines[i]!;
         lines.push(
           ...renderDialogueLineBlock(line.speaker, line.text, charIdents, {
-            sceneNumber,
+            shotNumber: shot.shotNumber,
             lineIndex: i,
             assetRegistry,
           }),
@@ -303,7 +298,6 @@ function renderMainLabel(
       const transition = transitionToken(shot.transition);
       lines.push(`    scene bg_${sceneIdent}${transition ? ` with ${transition}` : ''}`);
       activeScene = sceneIdent;
-      sceneNumber += 1;
       // Opening a scene plays its BGM if the asset was generated; otherwise stay silent.
       const bgm = lookupRealAsset(assetRegistry, 'bgm_track', logicalKeyForBgm(shot.sceneName));
       if (bgm) {
@@ -344,7 +338,7 @@ function renderMainLabel(
       const line = shot.dialogueLines[i]!;
       lines.push(
         ...renderDialogueLineBlock(line.speaker, line.text, charIdents, {
-          sceneNumber,
+          shotNumber: shot.shotNumber,
           lineIndex: i,
           assetRegistry,
         }),
@@ -371,7 +365,7 @@ function renderMainLabel(
 }
 
 interface VoiceContext {
-  readonly sceneNumber: number;
+  readonly shotNumber: number;
   readonly lineIndex: number;
   readonly assetRegistry?: AssetRegistryFile;
 }
@@ -388,15 +382,13 @@ function renderDialogueLineBlock(
   ctx: VoiceContext,
 ): string[] {
   const out: string[] = [];
-  if (ctx.sceneNumber > 0) {
-    const voice = lookupRealAsset(
-      ctx.assetRegistry,
-      'voice_line',
-      logicalKeyForVoiceLine(ctx.sceneNumber, ctx.lineIndex),
-    );
-    if (voice) {
-      out.push(`    voice "${voice}"`);
-    }
+  const voice = lookupRealAsset(
+    ctx.assetRegistry,
+    'voice_line',
+    logicalKeyForVoiceLine(ctx.shotNumber, ctx.lineIndex),
+  );
+  if (voice) {
+    out.push(`    voice "${voice}"`);
   }
   out.push(renderDialogueLine(speaker, text, charIdents));
   return out;

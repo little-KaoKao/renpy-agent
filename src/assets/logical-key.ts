@@ -20,16 +20,34 @@ export function logicalKeyForCharacter(name: string): string {
   return `character:${slugForFilename(name)}:main`;
 }
 
+export function logicalKeyForCharacterExpression(
+  characterName: string,
+  expressionName: string,
+): string {
+  return `character:${slugForFilename(characterName)}:expr:${slugForFilename(expressionName)}`;
+}
+
 export function logicalKeyForScene(name: string): string {
   return `scene:${slugForFilename(name)}:bg`;
+}
+
+export function logicalKeyForSceneTimeVariant(
+  sceneName: string,
+  timeOfDay: string,
+): string {
+  return `scene:${slugForFilename(sceneName)}:time:${slugForFilename(timeOfDay)}`;
+}
+
+export function logicalKeyForProp(name: string): string {
+  return `prop:${slugForFilename(name)}`;
 }
 
 export function logicalKeyForBgm(name: string): string {
   return `bgm:${slugForFilename(name)}`;
 }
 
-export function logicalKeyForVoiceLine(sceneNumber: number, lineIndex: number): string {
-  return `voice:scene_${sceneNumber}:line_${lineIndex}`;
+export function logicalKeyForVoiceLine(shotNumber: number, lineIndex: number): string {
+  return `voice:shot_${shotNumber}:line_${lineIndex}`;
 }
 
 export type SfxCue = 'enter' | 'action' | 'exit' | 'ambient';

@@ -1,5 +1,7 @@
 import type { LlmClient } from '../llm/types.js';
 import { extractJsonBlock } from '../llm/claude-client.js';
+import { retryJsonParse } from '../llm/retry.js';
+import { wrapParseError } from '../llm/stage-parse-error.js';
 import type { PlannerOutput, WriterOutput } from './types.js';
 
 const WRITER_SYSTEM = `You are the Writer for a Ren'Py galgame.
@@ -40,19 +42,29 @@ export async function runWriter(params: RunWriterParams): Promise<WriterOutput> 
     'Now write the chapter script as WriterOutput.',
   ].join('\n');
 
-  const res = await params.llm.chat({
-    messages: [
-      { role: 'system', content: WRITER_SYSTEM },
-      { role: 'user', content: userMsg },
-    ],
-    temperature: 0.7,
-    maxTokens: 4096,
+  return retryJsonParse({
+    attempt: async () => {
+      const res = await params.llm.chat({
+        messages: [
+          { role: 'system', content: WRITER_SYSTEM },
+          { role: 'user', content: userMsg },
+        ],
+        temperature: 0.7,
+        maxTokens: 4096,
+      });
+      try {
+        const json = extractJsonBlock(res.content);
+        const parsed = JSON.parse(json) as WriterOutput;
+        assertWriterOutput(parsed);
+        return parsed;
+      } catch (e) {
+        throw wrapParseError(e, res.content);
+      }
+    },
+    onRetry: (err, attempt) => {
+      console.warn(`[writer] attempt ${attempt} produced invalid output (${err.message}); retrying...`);
+    },
   });
-
-  const json = extractJsonBlock(res.content);
-  const parsed = JSON.parse(json) as WriterOutput;
-  assertWriterOutput(parsed);
-  return parsed;
 }
 
 function assertWriterOutput(value: unknown): asserts value is WriterOutput {

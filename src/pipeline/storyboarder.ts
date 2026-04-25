@@ -1,5 +1,7 @@
 import type { LlmClient } from '../llm/types.js';
 import { extractJsonBlock } from '../llm/claude-client.js';
+import { retryJsonParse } from '../llm/retry.js';
+import { wrapParseError } from '../llm/stage-parse-error.js';
 import type { PlannerOutput, StoryboarderOutput, WriterOutput } from './types.js';
 
 const STORYBOARDER_SYSTEM = `You are the Storyboarder for a Ren'Py galgame Stage-A playable demo.
@@ -79,19 +81,29 @@ export async function runStoryboarder(
     'Now produce StoryboarderOutput with at most 8 shots.',
   ].join('\n');
 
-  const res = await params.llm.chat({
-    messages: [
-      { role: 'system', content: STORYBOARDER_SYSTEM },
-      { role: 'user', content: userMsg },
-    ],
-    temperature: 0.6,
-    maxTokens: 6000,
+  return retryJsonParse({
+    attempt: async () => {
+      const res = await params.llm.chat({
+        messages: [
+          { role: 'system', content: STORYBOARDER_SYSTEM },
+          { role: 'user', content: userMsg },
+        ],
+        temperature: 0.6,
+        maxTokens: 6000,
+      });
+      try {
+        const json = extractJsonBlock(res.content);
+        const parsed = JSON.parse(json) as StoryboarderOutput;
+        assertStoryboarderOutput(parsed);
+        return parsed;
+      } catch (e) {
+        throw wrapParseError(e, res.content);
+      }
+    },
+    onRetry: (err, attempt) => {
+      console.warn(`[storyboarder] attempt ${attempt} produced invalid output (${err.message}); retrying...`);
+    },
   });
-
-  const json = extractJsonBlock(res.content);
-  const parsed = JSON.parse(json) as StoryboarderOutput;
-  assertStoryboarderOutput(parsed);
-  return parsed;
 }
 
 function assertStoryboarderOutput(

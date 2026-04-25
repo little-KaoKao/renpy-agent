@@ -322,15 +322,15 @@ describe('renderScriptRpy audio + UI insertion (v0.5)', () => {
   });
 
   it('inserts `voice` before a dialogue line when voice_line is ready', () => {
-    // First scene is sakura_night (sceneNumber=1), first dialogue line is index 0.
+    // First shot is shotNumber=1, first dialogue line is index 0.
     const registry: AssetRegistryFile = {
       version: 1,
       entries: [
         {
-          placeholderId: 'voice:scene_1:line_0',
+          placeholderId: 'voice:shot_1:line_0',
           logicalKey: logicalKeyForVoiceLine(1, 0),
           assetType: 'voice_line',
-          realAssetLocalPath: 'audio/voice/scene_1/line_0.mp3',
+          realAssetLocalPath: 'audio/voice/shot_1/line_0.mp3',
           remoteAssetUri: 'https://cdn/v.mp3',
           status: 'ready',
           updatedAt: '2026-04-25T00:00:00.000Z',
@@ -338,11 +338,11 @@ describe('renderScriptRpy audio + UI insertion (v0.5)', () => {
       ],
     };
     const script = renderScriptRpy(PLANNER_FIXTURE, STORYBOARDER_FIXTURE, registry);
-    expect(script).toContain('voice "audio/voice/scene_1/line_0.mp3"');
+    expect(script).toContain('voice "audio/voice/shot_1/line_0.mp3"');
     // voice line sits directly before its say — find its index and confirm the
     // next non-blank line is a say statement.
     const lines = script.split('\n');
-    const voiceIdx = lines.findIndex((l) => l.includes('voice "audio/voice/scene_1/line_0.mp3"'));
+    const voiceIdx = lines.findIndex((l) => l.includes('voice "audio/voice/shot_1/line_0.mp3"'));
     expect(voiceIdx).toBeGreaterThan(-1);
     expect(lines[voiceIdx + 1]).toMatch(/"你又来了。"/);
   });

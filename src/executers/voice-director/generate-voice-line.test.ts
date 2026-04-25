@@ -9,8 +9,8 @@ import { loadRegistry, registryPathForGame } from '../../assets/registry.js';
 import type { FetchLike } from '../../assets/download.js';
 
 describe('logicalKeyForVoiceLine', () => {
-  it('embeds scene and line indices', () => {
-    expect(logicalKeyForVoiceLine(2, 7)).toBe('voice:scene_2:line_7');
+  it('embeds shot and line indices', () => {
+    expect(logicalKeyForVoiceLine(2, 7)).toBe('voice:shot_2:line_7');
   });
 });
 
@@ -39,7 +39,7 @@ describe('generateVoiceLine', () => {
     const registryPath = registryPathForGame(gameDir);
 
     const result = await generateVoiceLine({
-      sceneNumber: 2,
+      shotNumber: 2,
       lineIndex: 5,
       text: '你又来了。',
       voiceTag: 'soft teenage girl, gentle and slightly melancholic',
@@ -53,10 +53,10 @@ describe('generateVoiceLine', () => {
 
     expect(result.entry.status).toBe('ready');
     expect(result.entry.assetType).toBe('voice_line');
-    expect(result.entry.realAssetLocalPath).toBe('audio/voice/scene_2/line_5.mp3');
+    expect(result.entry.realAssetLocalPath).toBe('audio/voice/shot_2/line_5.mp3');
 
     const reloaded = await loadRegistry(registryPath);
-    expect(reloaded.entries[0]!.logicalKey).toBe('voice:scene_2:line_5');
+    expect(reloaded.entries[0]!.logicalKey).toBe('voice:shot_2:line_5');
     expect(client.submitTask).toHaveBeenCalledWith(
       expect.objectContaining({
         appKey: 'VOICE_LINE',
@@ -81,7 +81,7 @@ describe('generateVoiceLine', () => {
 
     await expect(
       generateVoiceLine({
-        sceneNumber: 1,
+        shotNumber: 1,
         lineIndex: 0,
         text: 'failing line',
         voiceTag: 'whatever',
@@ -95,6 +95,6 @@ describe('generateVoiceLine', () => {
 
     const reloaded = await loadRegistry(registryPath);
     expect(reloaded.entries[0]!.status).toBe('error');
-    expect(reloaded.entries[0]!.logicalKey).toBe('voice:scene_1:line_0');
+    expect(reloaded.entries[0]!.logicalKey).toBe('voice:shot_1:line_0');
   });
 });
