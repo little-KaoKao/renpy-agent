@@ -243,3 +243,63 @@ export type {
   ReorderShotsParams,
   ModifyContext,
 } from './pipeline/modify.js';
+
+// --- v0.6 V5 Planner/Executer architecture ---
+
+export { runV5 } from './agents/run-v5.js';
+export type { RunV5Params, RunV5Result } from './agents/run-v5.js';
+
+export { runPlannerTask, PLANNER_SYSTEM_PROMPT } from './agents/planner.js';
+export type { RunPlannerTaskParams, RunPlannerTaskResult } from './agents/planner.js';
+
+export { runExecuterTask, EXECUTER_SYSTEM_PROMPT } from './agents/executer.js';
+export type { RunExecuterTaskParams, RunExecuterTaskResult } from './agents/executer.js';
+
+export {
+  output_with_plan,
+  output_with_finish,
+  read_from_uri,
+  handoff_to_agent,
+  call_task_agent,
+  active_workflow,
+  check_workflow_params,
+  get_workflow_guide,
+} from './agents/common-tools.js';
+export type {
+  CommonToolContext,
+  CommonToolLogger,
+  TaskAgentFn,
+  TaskAgentRegistry,
+} from './agents/common-tools.js';
+
+export {
+  buildWorkspaceIndex,
+  parseWorkspaceUri,
+  resolveUriToPath,
+  workspaceDirForGame,
+} from './agents/workspace-index.js';
+export type {
+  WorkspaceKind,
+  WorkspaceIndex,
+  WorkspaceIndexEntry,
+} from './agents/workspace-index.js';
+
+export {
+  appendPlannerMemory,
+  loadPlannerMemories,
+  formatMemoriesForPrompt,
+  MEMORY_LOG_FILENAME,
+} from './agents/memory.js';
+export type { PlannerMemoryEntry, PlannerMemoryKind } from './agents/memory.js';
+
+export {
+  POC_ROLES,
+  POC_REGISTRY,
+  getPocDescriptor,
+  isPocRole,
+} from './agents/poc-registry.js';
+export type { PocRole, PocDescriptor, PocTier } from './agents/poc-registry.js';
+
+export { TOOL_SET_BY_ROLE, getToolSetForRole } from './agents/tool-binder.js';
+export { stubTool } from './agents/tool-schema.js';
+export type { PocToolSet, ToolExecutor, ToolResult } from './agents/tool-schema.js';

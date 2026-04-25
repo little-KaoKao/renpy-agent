@@ -14,6 +14,7 @@ import {
   reorderShots,
 } from './pipeline/modify.js';
 import { rebuildGameProject } from './pipeline/rebuild.js';
+import { runV5 } from './agents/run-v5.js';
 
 export type ParsedCliCommand =
   | {
@@ -23,6 +24,11 @@ export type ParsedCliCommand =
       readonly audioUi?: boolean;
       readonly cutscene?: boolean;
       readonly resume?: boolean;
+    }
+  | {
+      readonly kind: 'v5';
+      readonly inspiration: string;
+      readonly storyName?: string;
     }
   | {
       readonly kind: 'modify';
@@ -51,7 +57,7 @@ export type ParsedCliCommand =
   | { readonly kind: 'rebuild'; readonly storyName: string }
   | { readonly kind: 'help' };
 
-const KNOWN_SUBCOMMANDS = new Set(['generate', 'modify', 'rebuild']);
+const KNOWN_SUBCOMMANDS = new Set(['generate', 'modify', 'rebuild', 'v5']);
 
 export function parseArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
   if (argv.some((a) => a === '--help' || a === '-h')) return { kind: 'help' };
@@ -59,6 +65,7 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
   if (head === 'generate') return parseGenerateArgs(argv.slice(1));
   if (head === 'modify') return parseModifyArgs(argv.slice(1));
   if (head === 'rebuild') return parseRebuildArgs(argv.slice(1));
+  if (head === 'v5') return parseV5Args(argv.slice(1));
   // Legacy form: `renpy-agent <inspiration...>` with optional --name / --audio-ui.
   if (head !== undefined && KNOWN_SUBCOMMANDS.has(head)) {
     // Should be unreachable given the checks above, but makes the type narrow tight.
@@ -155,6 +162,30 @@ function parseRebuildArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
   return { kind: 'rebuild', storyName };
 }
 
+function parseV5Args(argv: ReadonlyArray<string>): ParsedCliCommand {
+  let storyName: string | undefined;
+  const positional: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === '--story' || arg === '--name') {
+      const next = argv[i + 1];
+      if (!next) throw new Error(`${arg} requires a value`);
+      storyName = next;
+      i++;
+    } else if (arg.startsWith('--story=')) {
+      storyName = arg.slice('--story='.length);
+    } else if (arg.startsWith('--name=')) {
+      storyName = arg.slice('--name='.length);
+    } else {
+      positional.push(arg);
+    }
+  }
+  const inspiration = positional.join(' ').trim();
+  const result: ParsedCliCommand = { kind: 'v5', inspiration };
+  if (storyName !== undefined) (result as { storyName?: string }).storyName = storyName;
+  return result;
+}
+
 type FlagMap = Map<string, string | true>;
 
 function readFlags(argv: ReadonlyArray<string>): FlagMap {
@@ -220,6 +251,7 @@ const HELP_TEXT = `Usage:
   renpy-agent modify dialogue  <story> --shot <N> --line <i> --text "..." [--rebuild]
   renpy-agent modify shots     <story> --order 3,1,2,4,5,6,7,8 [--rebuild]
   renpy-agent rebuild <story>
+  renpy-agent v5 [--story <slug>] <inspiration text>       (V5 Planner/Executer, Design §0)
   renpy-agent -h | --help
 
 Legacy form (still supported):
@@ -261,12 +293,14 @@ export async function main(argv: ReadonlyArray<string>): Promise<number> {
   }
   if (cmd.kind === 'generate') return runGenerate(cmd);
   if (cmd.kind === 'modify') return runModify(cmd);
+  if (cmd.kind === 'v5') return runV5Command(cmd);
   return runRebuild(cmd);
 }
 
 type GenerateCommand = Extract<ParsedCliCommand, { kind: 'generate' }>;
 type ModifyCommand = Extract<ParsedCliCommand, { kind: 'modify' }>;
 type RebuildCommand = Extract<ParsedCliCommand, { kind: 'rebuild' }>;
+type V5Command = Extract<ParsedCliCommand, { kind: 'v5' }>;
 
 async function runGenerate(cmd: GenerateCommand): Promise<number> {
   if (!cmd.inspiration) {
@@ -375,6 +409,33 @@ async function runModify(cmd: ModifyCommand): Promise<number> {
       `❌ Modified snapshot saved, but rebuild failed: ${String((err as Error).message)}\n` +
         `   Run \`renpy-agent rebuild ${cmd.storyName}\` to retry.`,
     );
+    return 1;
+  }
+}
+
+async function runV5Command(cmd: V5Command): Promise<number> {
+  if (!cmd.inspiration) {
+    console.error('Error: inspiration text is required.');
+    console.error(HELP_TEXT);
+    return 1;
+  }
+  const storyName = slugifyStoryName(cmd.storyName);
+  const llm = new ClaudeLlmClient();
+  const gameDir = gameDirFor(storyName);
+  try {
+    const result = await runV5({
+      storyName,
+      inspiration: cmd.inspiration,
+      llm,
+      gameDir,
+    });
+    console.log(`\n✅ V5 run complete. Game at: ${result.gameDir}`);
+    console.log(`   Planner tasks: ${result.plannerTaskCount}`);
+    console.log(`   Final summary: ${result.finalSummary}`);
+    console.log(`   Run:  renpy-sdk/renpy.exe "${result.gameDir}"`);
+    return 0;
+  } catch (err) {
+    console.error(`\n❌ V5 run failed: ${String((err as Error).message)}`);
     return 1;
   }
 }
