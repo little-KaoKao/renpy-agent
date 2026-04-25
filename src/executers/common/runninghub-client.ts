@@ -1,32 +1,83 @@
-// RunningHub OpenAPI 客户端。
+// RunningHub OpenAPI 客户端(v0.5+:真 webappId + /openapi/v2 协议)。
 //
 // 端点:
-//   POST /task/openapi/ai-app/run   —— 提交一次 AI-App 任务
-//   POST /task/openapi/status       —— 查询任务状态
-//   POST /task/openapi/outputs      —— 拉取任务产物(成功后)
+//   POST /openapi/v2/run/ai-app/{webappId}  —— 提交一次 AI-App 任务
+//   POST /task/openapi/status               —— 查询任务状态
+//   POST /task/openapi/outputs              —— 拉取任务产物(成功后)
 //
-// 认证:所有请求体都带 `apiKey`(从 `.env` 里的 `RUNNINGHUB_API_KEY` 注入)。
+// 认证:Header `Authorization: Bearer <RUNNINGHUB_API_KEY>`(不再放 body.apiKey)。
 //
-// 身份映射:上层调用者传 `apiId`(形如 "api-425766740"),客户端根据构造时注入的
-// `appSchemas` 把它翻译成 `webappId` + 该 AI-App 的 prompt / 参考图 node 配置。
-// 不同 AI-App 的节点 ID / fieldName 不一样,必须登录 RunningHub 控制台的"API 调用"
-// 面板查到之后再在 `appSchemas` 里登记。
+// Schema:每个 AI-App 的 node 布局用 `AiAppSchema.fields[]` 描述,caller 传
+// `{role, value}[]`,客户端按 schema 查 (nodeId, fieldName) 并拼 nodeInfoList。
+// role 是语义层 key(例如 `prompt` / `first_frame`),schema 决定它落在哪个 node
+// 哪个 field 上。下拉字段需要 `fieldData`(枚举字符串),客户端从 schema 读取默认
+// 值或 caller 覆盖。
 
 export type RunningHubTaskStatus = 'pending' | 'running' | 'done' | 'error';
 
-/** 每个 AI-App 的节点布局。登录 RunningHub 控制台 → 打开该 AI-App → "API 调用"面板可以看到。 */
+/** 一个 AI-App 节点字段的角色语义 —— 用于把 caller 的 inputs 和 schema 对齐。 */
+export type AiAppFieldRole =
+  | 'prompt'
+  | 'negative_prompt'
+  | 'reference_image_1'
+  | 'reference_image_2'
+  | 'reference_image_3'
+  | 'first_frame'
+  | 'last_frame'
+  | 'reference_video'
+  | 'voice_text'
+  | 'line_text'
+  | 'aspect'
+  | 'resolution'
+  | 'duration'
+  | 'ratio'
+  | 'model_select'
+  | 'title'
+  | 'style'
+  | 'version'
+  | 'option';
+
+/** 单个 node × fieldName 的 schema。一个 node 可以挂多个 fieldName,每个各起一行。 */
+export interface AiAppNodeFieldSchema {
+  readonly nodeId: string;
+  readonly fieldName: string;
+  readonly role: AiAppFieldRole;
+  /** 下拉字段的枚举白名单(空表示自由文本)。RunningHub 要求把它作为 `fieldData` 传回。 */
+  readonly fieldData?: string;
+  /** 默认值。caller 不覆盖时客户端用这个填。 */
+  readonly defaultValue?: string;
+  /** 可选字段(例如 last_frame / reference_image_2):caller 不传就跳过。 */
+  readonly optional?: boolean;
+}
+
 export interface AiAppSchema {
+  /** RunningHub 控制台 → AI-App → "API 调用"面板里看到的 19 位数字 webappId。 */
   readonly webappId: string;
-  readonly promptNodeId: string;
-  readonly promptFieldName: string;
-  readonly referenceImageNodeId?: string;
-  readonly referenceImageFieldName?: string;
+  readonly displayName: string;
+  readonly fields: ReadonlyArray<AiAppNodeFieldSchema>;
+}
+
+/** caller 侧的单项输入:按 role 对齐到 schema 的 field。 */
+export interface AiAppNodeInput {
+  readonly role: AiAppFieldRole;
+  readonly value: string;
+  /**
+   * 当 schema 里同一个 role 挂了多个 field(例如 `option` 在 VOICE_LINE 里挂在
+   * nodeId=7 和 nodeId=6 上),用这个精确指定其中一条。不传时匹配 role 的第一条。
+   */
+  readonly nodeId?: string;
+  readonly fieldName?: string;
 }
 
 export interface RunningHubSubmitParams {
-  readonly apiId: string;
-  readonly prompt: string;
-  readonly referenceImageUri?: string;
+  /**
+   * 语义 key。客户端按这个在 `appSchemas` 里查 `AiAppSchema`。
+   * 不再传裸 webappId —— 上层用 `RunningHubAppKey` 语义。
+   */
+  readonly appKey: string;
+  readonly inputs: ReadonlyArray<AiAppNodeInput>;
+  readonly instanceType?: 'default' | 'plus';
+  readonly usePersonalQueue?: boolean;
 }
 
 export interface RunningHubTaskResult {
@@ -84,6 +135,13 @@ interface RhOutputItem {
   readonly url?: string;
 }
 
+interface NodeInfo {
+  nodeId: string;
+  fieldName: string;
+  fieldValue: string;
+  fieldData?: string;
+}
+
 export class HttpRunningHubClient implements RunningHubClient {
   private readonly apiKey: string;
   private readonly appSchemas: Readonly<Record<string, AiAppSchema>>;
@@ -106,37 +164,24 @@ export class HttpRunningHubClient implements RunningHubClient {
   async submitTask(
     params: RunningHubSubmitParams,
   ): Promise<{ readonly taskId: string }> {
-    const schema = this.appSchemas[params.apiId];
+    const schema = this.appSchemas[params.appKey];
     if (!schema) {
       throw new Error(
-        `RunningHubClient: no AiAppSchema registered for apiId="${params.apiId}". ` +
-          `Add it to the client constructor's appSchemas map (check the RunningHub console's "API 调用" panel for webappId and node IDs).`,
+        `RunningHubClient: no AiAppSchema registered for appKey="${params.appKey}". ` +
+          `Add it to the client constructor's appSchemas map (check the RunningHub console's "API 调用" panel for webappId and node fields).`,
       );
     }
 
-    const nodeInfoList: Array<{ nodeId: string; fieldName: string; fieldValue: string }> = [
-      {
-        nodeId: schema.promptNodeId,
-        fieldName: schema.promptFieldName,
-        fieldValue: params.prompt,
-      },
-    ];
-    if (params.referenceImageUri) {
-      if (!schema.referenceImageNodeId || !schema.referenceImageFieldName) {
-        throw new Error(
-          `RunningHubClient: apiId="${params.apiId}" does not support referenceImageUri (no referenceImageNodeId/fieldName in schema).`,
-        );
-      }
-      nodeInfoList.push({
-        nodeId: schema.referenceImageNodeId,
-        fieldName: schema.referenceImageFieldName,
-        fieldValue: params.referenceImageUri,
-      });
-    }
+    const nodeInfoList = this.buildNodeInfoList(params.appKey, schema, params.inputs);
 
     const envelope = await this.postJson<RhEnvelope<RhSubmitData>>(
-      '/task/openapi/ai-app/run',
-      { apiKey: this.apiKey, webappId: schema.webappId, nodeInfoList },
+      `/openapi/v2/run/ai-app/${encodeURIComponent(schema.webappId)}`,
+      {
+        nodeInfoList,
+        instanceType: params.instanceType ?? 'default',
+        usePersonalQueue: String(params.usePersonalQueue ?? false),
+      },
+      { Authorization: `Bearer ${this.apiKey}` },
     );
     if (envelope.code !== 0 || !envelope.data?.taskId) {
       throw new RunningHubError(
@@ -149,6 +194,9 @@ export class HttpRunningHubClient implements RunningHubClient {
   }
 
   async pollTask(taskId: string): Promise<RunningHubTaskResult> {
+    // 注:/task/openapi/status 和 /task/openapi/outputs 目前保持旧路径(body.apiKey)。
+    // 如果 RunningHub 把这两个端点也迁到 v2 了,按官方错误码再调整。
+    // 参考:https://www.runninghub.cn/runninghub-api-doc-cn/doc-8435517.md
     const statusEnv = await this.postJson<RhEnvelope<RhStatusData | string>>(
       '/task/openapi/status',
       { apiKey: this.apiKey, taskId },
@@ -195,11 +243,74 @@ export class HttpRunningHubClient implements RunningHubClient {
     return { status: 'done', outputUri };
   }
 
-  private async postJson<T>(path: string, body: unknown): Promise<T> {
+  private buildNodeInfoList(
+    appKey: string,
+    schema: AiAppSchema,
+    inputs: ReadonlyArray<AiAppNodeInput>,
+  ): NodeInfo[] {
+    const inputMap = new Map<string, AiAppNodeInput>();
+    for (const input of inputs) {
+      const key = nodeInputKey(input.role, input.nodeId, input.fieldName);
+      inputMap.set(key, input);
+    }
+
+    const list: NodeInfo[] = [];
+    const consumedInputKeys = new Set<string>();
+
+    for (const field of schema.fields) {
+      const preciseKey = nodeInputKey(field.role, field.nodeId, field.fieldName);
+      const roleOnlyKey = nodeInputKey(field.role);
+      const input = inputMap.get(preciseKey) ?? inputMap.get(roleOnlyKey);
+      if (input) {
+        consumedInputKeys.add(preciseKey);
+        consumedInputKeys.add(roleOnlyKey);
+      }
+
+      const value = input?.value ?? field.defaultValue;
+      if (value === undefined) {
+        if (field.optional) continue;
+        throw new Error(
+          `RunningHubClient: appKey="${appKey}" missing required input for role="${field.role}" ` +
+            `(nodeId=${field.nodeId}, fieldName=${field.fieldName}). ` +
+            `Provide it via RunningHubSubmitParams.inputs or set a defaultValue in the schema.`,
+        );
+      }
+
+      const entry: NodeInfo = {
+        nodeId: field.nodeId,
+        fieldName: field.fieldName,
+        fieldValue: value,
+      };
+      if (field.fieldData !== undefined) {
+        entry.fieldData = field.fieldData;
+      }
+      list.push(entry);
+    }
+
+    for (const input of inputs) {
+      const preciseKey = nodeInputKey(input.role, input.nodeId, input.fieldName);
+      const roleOnlyKey = nodeInputKey(input.role);
+      if (!consumedInputKeys.has(preciseKey) && !consumedInputKeys.has(roleOnlyKey)) {
+        throw new Error(
+          `RunningHubClient: appKey="${appKey}" has no schema field for role="${input.role}"` +
+            (input.nodeId ? ` (nodeId=${input.nodeId}, fieldName=${input.fieldName ?? '?'})` : '') +
+            `. Either drop the input or add the field to the schema.`,
+        );
+      }
+    }
+
+    return list;
+  }
+
+  private async postJson<T>(
+    path: string,
+    body: unknown,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<T> {
     const url = this.baseUrl + path;
     const res = await this.fetchFn(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...extraHeaders },
       body: JSON.stringify(body),
     });
     const text = await res.text();
@@ -217,6 +328,10 @@ export class HttpRunningHubClient implements RunningHubClient {
       );
     }
   }
+}
+
+function nodeInputKey(role: AiAppFieldRole, nodeId?: string, fieldName?: string): string {
+  return `${role}|${nodeId ?? ''}|${fieldName ?? ''}`;
 }
 
 function extractRawStatus(data: RhStatusData | string | undefined): string {

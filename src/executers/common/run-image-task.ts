@@ -1,8 +1,8 @@
-// 通用 submit + poll helper:任何"吃 prompt,产出单个 URI"的 AI-App 都走这个。
+// 通用 submit + poll helper:任何"吃 inputs,产出单个 URI"的 AI-App 都走这个。
 //
-// 用途:角色设计师 / 场景设计师 / 分镜师在 v0.3b/c 都会调它,省掉散写 submit+sleep+poll 的样板。
-// Scope:只封装流程,不下载;不决定占位策略 —— 那是 caller 的事(见 download-asset.ts 和
-// character-designer/scene-designer)。
+// 用途:角色设计师 / 场景设计师 / 分镜师 / 配音导演 / 音效设计师 / 音乐总监在
+// v0.3b/c 以及 v0.5+ 都会调它,省掉散写 submit+sleep+poll 的样板。
+// Scope:只封装流程,不下载;不决定占位策略 —— 那是 caller 的事(见 download-asset.ts)。
 
 import type {
   RunningHubClient,
@@ -50,11 +50,10 @@ export async function runImageTask(params: RunImageTaskParams): Promise<RunImage
   const now = params.now ?? Date.now;
 
   const submitArgs: RunningHubSubmitParams = {
-    apiId: params.apiId,
-    prompt: params.prompt,
-    ...(params.referenceImageUri !== undefined
-      ? { referenceImageUri: params.referenceImageUri }
-      : {}),
+    appKey: params.appKey,
+    inputs: params.inputs,
+    ...(params.instanceType !== undefined ? { instanceType: params.instanceType } : {}),
+    ...(params.usePersonalQueue !== undefined ? { usePersonalQueue: params.usePersonalQueue } : {}),
   };
   const { taskId } = await params.client.submitTask(submitArgs);
 

@@ -8,32 +8,60 @@ import {
 
 const FAKE_KEY = 'fake-key';
 
-const BASIC_SCHEMAS: Record<string, AiAppSchema> = {
-  'api-425766740': {
-    webappId: '425766740',
-    promptNodeId: '6',
-    promptFieldName: 'text',
+const TEST_SCHEMAS: Record<string, AiAppSchema> = {
+  // 最小 schema:只有 prompt。
+  TEXT_TO_IMAGE: {
+    webappId: '1234567890123456789',
+    displayName: 'test text-to-image',
+    fields: [{ nodeId: '6', fieldName: 'text', role: 'prompt' }],
   },
-  'api-437377723': {
-    webappId: '437377723',
-    promptNodeId: '6',
-    promptFieldName: 'text',
-    referenceImageNodeId: '10',
-    referenceImageFieldName: 'image',
+  // 带首帧图参考 + 默认 option。
+  IMAGE_TO_VIDEO: {
+    webappId: '2234567890123456789',
+    displayName: 'test image-to-video',
+    fields: [
+      { nodeId: '2', fieldName: 'image', role: 'first_frame' },
+      { nodeId: '3', fieldName: 'image', role: 'last_frame', optional: true },
+      { nodeId: '1', fieldName: 'real_person_mode', role: 'option', defaultValue: 'false' },
+      { nodeId: '1', fieldName: 'prompt', role: 'prompt' },
+    ],
+  },
+  // 带下拉 fieldData。
+  WITH_FIELDDATA: {
+    webappId: '3234567890123456789',
+    displayName: 'test with fieldData enum',
+    fields: [
+      {
+        nodeId: '4',
+        fieldName: 'model_selected',
+        role: 'model_select',
+        defaultValue: 'Midjourney V7',
+        fieldData: '["Midjourney V7","Midjourney V6"]',
+      },
+      { nodeId: '6', fieldName: 'text', role: 'prompt' },
+    ],
   },
 };
 
 function makeFetch(
-  handlers: Record<string, (body: any) => { status?: number; json?: unknown; text?: string }>,
-): { fetchFn: FetchLike; calls: Array<{ url: string; body: any }> } {
-  const calls: Array<{ url: string; body: any }> = [];
+  handlers: Record<string, (body: any, headers: Headers) => { status?: number; json?: unknown; text?: string }>,
+): {
+  fetchFn: FetchLike;
+  calls: Array<{ url: string; body: any; headers: Record<string, string> }>;
+} {
+  const calls: Array<{ url: string; body: any; headers: Record<string, string> }> = [];
   const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(String(init.body)) : {};
-    calls.push({ url, body });
+    const rawHeaders = new Headers(init?.headers);
+    const headerObj: Record<string, string> = {};
+    rawHeaders.forEach((v, k) => {
+      headerObj[k.toLowerCase()] = v;
+    });
+    calls.push({ url, body, headers: headerObj });
     const path = new URL(url).pathname;
-    const handler = handlers[path];
+    const handler = Object.entries(handlers).find(([prefix]) => path.startsWith(prefix))?.[1];
     if (!handler) throw new Error(`unexpected path: ${path}`);
-    const result = handler(body);
+    const result = handler(body, rawHeaders);
     const text = result.text ?? JSON.stringify(result.json ?? {});
     return new Response(text, {
       status: result.status ?? 200,
@@ -44,101 +72,176 @@ function makeFetch(
 }
 
 describe('HttpRunningHubClient.submitTask', () => {
-  it('translates apiId to webappId and posts prompt nodeInfoList', async () => {
+  it('posts to /openapi/v2/run/ai-app/{webappId} with Bearer auth and body without apiKey', async () => {
     const { fetchFn, calls } = makeFetch({
-      '/task/openapi/ai-app/run': () => ({
+      '/openapi/v2/run/ai-app/': () => ({
         json: { code: 0, data: { taskId: 'task-xyz' } },
       }),
     });
     const client = new HttpRunningHubClient({
       apiKey: FAKE_KEY,
-      appSchemas: BASIC_SCHEMAS,
+      appSchemas: TEST_SCHEMAS,
       fetchFn,
     });
 
     const result = await client.submitTask({
-      apiId: 'api-425766740',
-      prompt: 'a cat on the moon',
+      appKey: 'TEXT_TO_IMAGE',
+      inputs: [{ role: 'prompt', value: 'a cat on the moon' }],
     });
 
     expect(result.taskId).toBe('task-xyz');
     expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain('/openapi/v2/run/ai-app/1234567890123456789');
+    expect(calls[0]!.headers['authorization']).toBe(`Bearer ${FAKE_KEY}`);
     expect(calls[0]!.body).toEqual({
-      apiKey: FAKE_KEY,
-      webappId: '425766740',
       nodeInfoList: [{ nodeId: '6', fieldName: 'text', fieldValue: 'a cat on the moon' }],
+      instanceType: 'default',
+      usePersonalQueue: 'false',
     });
+    expect(calls[0]!.body.apiKey).toBeUndefined();
   });
 
-  it('appends reference image node when schema supports it', async () => {
+  it('fills in schema defaults for fields the caller does not provide', async () => {
     const { fetchFn, calls } = makeFetch({
-      '/task/openapi/ai-app/run': () => ({
+      '/openapi/v2/run/ai-app/': () => ({
         json: { code: 0, data: { taskId: 't1' } },
       }),
     });
     const client = new HttpRunningHubClient({
       apiKey: FAKE_KEY,
-      appSchemas: BASIC_SCHEMAS,
+      appSchemas: TEST_SCHEMAS,
       fetchFn,
     });
 
     await client.submitTask({
-      apiId: 'api-437377723',
-      prompt: 'kiss scene',
-      referenceImageUri: 'https://example.com/ref.png',
+      appKey: 'IMAGE_TO_VIDEO',
+      inputs: [
+        { role: 'first_frame', value: 'https://cdn/first.jpg' },
+        { role: 'prompt', value: 'dolly in' },
+      ],
     });
 
+    // last_frame is optional + not provided → skipped.
+    // real_person_mode has defaultValue 'false' → included.
     expect(calls[0]!.body.nodeInfoList).toEqual([
-      { nodeId: '6', fieldName: 'text', fieldValue: 'kiss scene' },
-      { nodeId: '10', fieldName: 'image', fieldValue: 'https://example.com/ref.png' },
+      { nodeId: '2', fieldName: 'image', fieldValue: 'https://cdn/first.jpg' },
+      { nodeId: '1', fieldName: 'real_person_mode', fieldValue: 'false' },
+      { nodeId: '1', fieldName: 'prompt', fieldValue: 'dolly in' },
     ]);
   });
 
-  it('throws when apiId is not registered in appSchemas', async () => {
-    const { fetchFn } = makeFetch({});
-    const client = new HttpRunningHubClient({
-      apiKey: FAKE_KEY,
-      appSchemas: BASIC_SCHEMAS,
-      fetchFn,
-    });
-
-    await expect(
-      client.submitTask({ apiId: 'api-unknown', prompt: 'x' }),
-    ).rejects.toThrow(/no AiAppSchema/);
-  });
-
-  it('throws RunningHubError on non-zero code', async () => {
-    const { fetchFn } = makeFetch({
-      '/task/openapi/ai-app/run': () => ({
-        json: { code: 1, msg: 'webapp not exists' },
+  it('emits fieldData when the schema declares an enum whitelist', async () => {
+    const { fetchFn, calls } = makeFetch({
+      '/openapi/v2/run/ai-app/': () => ({
+        json: { code: 0, data: { taskId: 't2' } },
       }),
     });
     const client = new HttpRunningHubClient({
       apiKey: FAKE_KEY,
-      appSchemas: BASIC_SCHEMAS,
+      appSchemas: TEST_SCHEMAS,
+      fetchFn,
+    });
+
+    await client.submitTask({
+      appKey: 'WITH_FIELDDATA',
+      inputs: [{ role: 'prompt', value: 'test' }],
+    });
+
+    const nodeInfoList = calls[0]!.body.nodeInfoList;
+    expect(nodeInfoList[0]).toEqual({
+      nodeId: '4',
+      fieldName: 'model_selected',
+      fieldValue: 'Midjourney V7',
+      fieldData: '["Midjourney V7","Midjourney V6"]',
+    });
+  });
+
+  it('passes through instanceType and usePersonalQueue', async () => {
+    const { fetchFn, calls } = makeFetch({
+      '/openapi/v2/run/ai-app/': () => ({
+        json: { code: 0, data: { taskId: 't3' } },
+      }),
+    });
+    const client = new HttpRunningHubClient({
+      apiKey: FAKE_KEY,
+      appSchemas: TEST_SCHEMAS,
+      fetchFn,
+    });
+
+    await client.submitTask({
+      appKey: 'TEXT_TO_IMAGE',
+      inputs: [{ role: 'prompt', value: 'x' }],
+      instanceType: 'plus',
+      usePersonalQueue: true,
+    });
+
+    expect(calls[0]!.body.instanceType).toBe('plus');
+    expect(calls[0]!.body.usePersonalQueue).toBe('true');
+  });
+
+  it('throws when appKey is not registered', async () => {
+    const { fetchFn } = makeFetch({});
+    const client = new HttpRunningHubClient({
+      apiKey: FAKE_KEY,
+      appSchemas: TEST_SCHEMAS,
       fetchFn,
     });
 
     await expect(
-      client.submitTask({ apiId: 'api-425766740', prompt: 'x' }),
-    ).rejects.toBeInstanceOf(RunningHubError);
+      client.submitTask({ appKey: 'UNKNOWN_KEY', inputs: [{ role: 'prompt', value: 'x' }] }),
+    ).rejects.toThrow(/no AiAppSchema/);
   });
 
-  it('throws when reference image given but schema does not declare it', async () => {
+  it('throws when a required schema field is missing from inputs', async () => {
     const { fetchFn } = makeFetch({});
     const client = new HttpRunningHubClient({
       apiKey: FAKE_KEY,
-      appSchemas: BASIC_SCHEMAS,
+      appSchemas: TEST_SCHEMAS,
       fetchFn,
     });
 
     await expect(
       client.submitTask({
-        apiId: 'api-425766740',
-        prompt: 'x',
-        referenceImageUri: 'https://x.png',
+        appKey: 'IMAGE_TO_VIDEO',
+        inputs: [{ role: 'prompt', value: 'missing first frame' }],
       }),
-    ).rejects.toThrow(/does not support referenceImageUri/);
+    ).rejects.toThrow(/missing required input for role="first_frame"/);
+  });
+
+  it('throws when an input has no matching schema field', async () => {
+    const { fetchFn } = makeFetch({});
+    const client = new HttpRunningHubClient({
+      apiKey: FAKE_KEY,
+      appSchemas: TEST_SCHEMAS,
+      fetchFn,
+    });
+
+    await expect(
+      client.submitTask({
+        appKey: 'TEXT_TO_IMAGE',
+        inputs: [
+          { role: 'prompt', value: 'ok' },
+          { role: 'reference_image_1', value: 'https://x.png' },
+        ],
+      }),
+    ).rejects.toThrow(/no schema field for role="reference_image_1"/);
+  });
+
+  it('throws RunningHubError on non-zero response code', async () => {
+    const { fetchFn } = makeFetch({
+      '/openapi/v2/run/ai-app/': () => ({
+        json: { code: 1, msg: 'webapp not exists' },
+      }),
+    });
+    const client = new HttpRunningHubClient({
+      apiKey: FAKE_KEY,
+      appSchemas: TEST_SCHEMAS,
+      fetchFn,
+    });
+
+    await expect(
+      client.submitTask({ appKey: 'TEXT_TO_IMAGE', inputs: [{ role: 'prompt', value: 'x' }] }),
+    ).rejects.toBeInstanceOf(RunningHubError);
   });
 });
 
@@ -149,7 +252,7 @@ describe('HttpRunningHubClient.pollTask', () => {
     });
     const client = new HttpRunningHubClient({
       apiKey: FAKE_KEY,
-      appSchemas: BASIC_SCHEMAS,
+      appSchemas: TEST_SCHEMAS,
       fetchFn,
     });
     const res = await client.pollTask('t1');
@@ -162,7 +265,7 @@ describe('HttpRunningHubClient.pollTask', () => {
     });
     const client = new HttpRunningHubClient({
       apiKey: FAKE_KEY,
-      appSchemas: BASIC_SCHEMAS,
+      appSchemas: TEST_SCHEMAS,
       fetchFn,
     });
     expect((await client.pollTask('t1')).status).toBe('running');
@@ -183,7 +286,7 @@ describe('HttpRunningHubClient.pollTask', () => {
     });
     const client = new HttpRunningHubClient({
       apiKey: FAKE_KEY,
-      appSchemas: BASIC_SCHEMAS,
+      appSchemas: TEST_SCHEMAS,
       fetchFn,
     });
     const res = await client.pollTask('t1');
@@ -199,7 +302,7 @@ describe('HttpRunningHubClient.pollTask', () => {
     });
     const client = new HttpRunningHubClient({
       apiKey: FAKE_KEY,
-      appSchemas: BASIC_SCHEMAS,
+      appSchemas: TEST_SCHEMAS,
       fetchFn,
     });
     const res = await client.pollTask('t1');
@@ -214,7 +317,7 @@ describe('HttpRunningHubClient.pollTask', () => {
     });
     const client = new HttpRunningHubClient({
       apiKey: FAKE_KEY,
-      appSchemas: BASIC_SCHEMAS,
+      appSchemas: TEST_SCHEMAS,
       fetchFn,
     });
     const res = await client.pollTask('t1');
@@ -231,7 +334,7 @@ describe('HttpRunningHubClient.pollTask', () => {
     });
     const client = new HttpRunningHubClient({
       apiKey: FAKE_KEY,
-      appSchemas: BASIC_SCHEMAS,
+      appSchemas: TEST_SCHEMAS,
       fetchFn,
     });
     expect((await client.pollTask('t1')).outputUri).toBe('https://cdn.rh.example/fallback.png');
@@ -243,7 +346,7 @@ describe('HttpRunningHubClient.pollTask', () => {
     });
     const client = new HttpRunningHubClient({
       apiKey: FAKE_KEY,
-      appSchemas: BASIC_SCHEMAS,
+      appSchemas: TEST_SCHEMAS,
       fetchFn,
     });
     await expect(client.pollTask('t1')).rejects.toBeInstanceOf(RunningHubError);

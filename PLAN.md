@@ -1,7 +1,7 @@
 # Agentic Galgame 项目计划
 
-> 最后更新:2026-04-23
-> 当前阶段:v0.2 minimal pipeline + v0.3a/b/c 骨架全部落地;Coder 支持 AssetRegistry 真资产绑定;角色/场景设计师主干接通 RunningHub(真 webappId 待控制台核对);分镜师视频路径骨架就位(`renpy.movie_cutscene` + 视频 executer 占位);v0.4 修改闭环三个典型场景编程接口就位(story workspace 持久化 + modifyCharacterAppearance / modifyDialogueLine / reorderShots);v0.5 员工扩招骨架落地(音乐总监 / 配音导演 / 音效设计师 / UI 设计师 = 4 位 POC,BgmTrack/VoiceLine/Sfx/UiDesign 4 文档,RunningHub schema 刷新到 api-448183xxx 系列 + 新增 VOICE_LINE/SFX)
+> 最后更新:2026-04-25
+> 当前阶段:v0.2 minimal pipeline + v0.3a/b/c 骨架全部落地;Coder 支持 AssetRegistry 真资产绑定;角色/场景设计师/分镜师主干接通 RunningHub(协议已迁到 `/openapi/v2/run/ai-app/{webappId}` + `Authorization: Bearer`,8 个 AppKey 的 `webappId`/`fields[]` 全部登记真值);v0.4 修改闭环三个典型场景编程接口就位(story workspace 持久化 + modifyCharacterAppearance / modifyDialogueLine / reorderShots);v0.5 员工扩招骨架落地(音乐总监 / 配音导演 / 音效设计师 / UI 设计师 = 4 位 POC,BgmTrack/VoiceLine/Sfx/UiDesign 4 文档,RunningHub schema 8 个 AppKey 真值就绪:MJ v7 / Nanobanana2 / Seedance2.0 / Qwen3 TTS / SunoV5)
 
 ---
 
@@ -141,19 +141,20 @@
 
 所有 POC 的图 / 视频调用都走 [src/executers/common/runninghub-client.ts](src/executers/common/runninghub-client.ts)(目前只是 interface 契约,运行时实现待 v0.3),不各自散写 HTTP。
 
-| POC        | 资产类型                    | 首选模型                                              | 备选 / 特殊用途                                              |
-| ---------- | --------------------------- | ----------------------------------------------------- | ------------------------------------------------------------ |
-| 角色设计师 | 角色立绘主图                | `悠船文生图-niji7`(api-448183249)                   | `全能图片V2-文生图-官方稳定版`(api-448183260)做风格兜底   |
-| 角色设计师 | 表情差分                    | `全能图片V2-图生图-官方稳定版`(api-448183224)        | 吃角色立绘主图 + 情绪 hint,产同角色差分                     |
-| 角色设计师 | 动态立绘(呼吸/眨眼/发丝)    | `seedance2.0/多模态视频`(api-448183127)              | 吃角色立绘主图 + 动作描述,产短循环视频                      |
-| 场景设计师 | 背景 / 道具静态图           | `全能图片V2-文生图-官方稳定版`(api-448183260)        | `悠船文生图-niji7`(api-448183249)做二选一                  |
-| 分镜师     | 片头 / 片尾 / 章节过场 CG   | `seedance2.0/图生视频`(api-448183116)                | 吃场景设计师产出的"首帧"图 URI                               |
-| 分镜师     | 关键剧情 CG(吻戏/战斗/死亡) | `seedance2.0/多模态视频`(api-448183127)              | 吃角色 + 场景参考图 URI,保证人物一致性                       |
-| 音乐总监   | BGM 主题 / 章节 / 路线      | `suno`(文档待接入,API 不走 RunningHub,另封 client) | 按 chapterUri / routeUri / sceneUri 差异化                   |
-| 配音导演   | 对白配音                    | `minimax/speech-2.8-hd`(api-448183268)               | 吃 Script.lines + Character.voiceTag,每句一条 VoiceLine     |
-| 音效设计师 | 环境音 / 动作音             | `minimax/speech-2.8-hd`(api-448183268,复用)        | 短音效 / 环境音,按 Shot + cue 触发;后续可换独立 TTA         |
+| POC        | 资产类型                    | 首选模型(webappId)                                                  | 备选 / 特殊用途                                              |
+| ---------- | --------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 角色设计师 | 角色立绘主图                | `悠船 Midjourney v7 文生图`(webappId `1941094122503749633`)          | 吃纯文本 prompt,aspect=3:4,角色立绘默认                      |
+| 角色设计师 | 表情差分                    | `Nanobanana2 全能图片 2.0 图生图`(webappId `2027211316242423809`)    | 吃 1~3 张参考图 + 文本 prompt,产同角色差分                   |
+| 角色设计师 | 动态立绘(呼吸/眨眼/发丝)    | `Seedance2.0 图生视频`(webappId `2037048798156951553`)               | 吃角色立绘主图 + 动作描述,产短循环视频                      |
+| 场景设计师 | 背景 / 道具静态图           | `Nanobanana2 全能图片 2.0`(webappId `2027211316242423809`,复用)     | 文生图模式:不传 image node,aspect=16:9                      |
+| 分镜师     | 过场 / 关键剧情 CG          | `Seedance2.0 图生视频`(webappId `2037048798156951553`,复用)         | 吃场景 / 角色合成首帧 + 镜头运镜 prompt(多图参考先走 Nanobanana2 合首帧,再喂 Seedance) |
+| 音乐总监   | BGM 主题 / 章节 / 路线      | `SunoV5`(webappId `1972977443998928898`,走 RunningHub,不单封 client) | 按 chapterUri / routeUri / sceneUri 差异化                   |
+| 配音导演   | 对白配音                    | `Qwen3 TTS 声音设计`(webappId `2014603342701404161`)                 | 吃 Character.voiceTag(音色)+ Script 单句(台词)             |
+| 音效设计师 | 环境音 / 动作音             | `Qwen3 TTS 声音设计`(webappId `2014603342701404161`,暂复用)         | 音效描述塞 line_text,音色塞"环境音朗读者";后续换独立 TTA    |
 
 **POC 间的参考图流转**:分镜师调视频模型时**不自产首帧/参考图**,而是把场景设计师的 `sceneUri` 和角色设计师的 `characterUri`(主图)作为参数传入。URI 引用保证 Cutscene 文档不拷贝资产,角色或场景变更后通过 Stage B 原地替换即可。
+
+**协议层(v0.5+)**:所有 submit 打 `POST /openapi/v2/run/ai-app/{webappId}`,认证走 `Authorization: Bearer`(不再放 body.apiKey);pollTask / outputs 仍沿用 `/task/openapi/status` 和 `/task/openapi/outputs`(body.apiKey,等官方迁 v2 再改)。客户端里登记 `AiAppSchema.fields[]`(role × nodeId × fieldName × defaultValue × optional),上层 executer 只提供 `role + value`。详见 [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts)。
 
 **接入姿态**:
 
@@ -227,9 +228,9 @@
 | 3  | 分镜师          | Storyboard(Shot[]) / Cutscene(视频镜头)                    | Script → 镜头级演出方案;识别需要视频的镜头(过场 CG / 关键剧情 CG),调 RunningHub 视频模型,调用 [resources/renpy-storyboard](resources/renpy-storyboard/SKILL.md) |
 | 4  | 角色设计师      | Character(外观 + 立绘 + 差分 + 可选动态立绘)               | 角色立绘主图 + 表情/动作差分,动态立绘(视频循环)可选,支持占位                                                                                                     |
 | 5  | 场景/道具设计师 | Scene / Prop                                               | 背景图、道具图,含时段/光照变体                                                                                                                                       |
-| 6  | 音乐总监        | BgmTrack                                                   | 章节 / 路线 / 场景级 BGM;走 suno 生成,占位→真音替换与视觉资产同一套 AssetRegistry                                                                                   |
-| 7  | 配音导演        | VoiceLine                                                  | 按 Script (sceneNumber,lineIndex) 逐句配音;voiceTag 继承 Character,支持回忆/破防等场合临时覆写;走 RunningHub `minimax/speech-2.8-hd`                             |
-| 8  | 音效设计师      | Sfx                                                        | 门响 / 脚步 / 心跳 / 雨声等环境音与动作音,按 Shot + cue(enter/action/exit/ambient) 触发;后端暂复用 `minimax/speech-2.8-hd`,后续换独立 TTA                        |
+| 6  | 音乐总监        | BgmTrack                                                   | 章节 / 路线 / 场景级 BGM;走 RunningHub SunoV5(webappId `1972977443998928898`),与视觉资产同一套 AssetRegistry                                                       |
+| 7  | 配音导演        | VoiceLine                                                  | 按 Script (sceneNumber,lineIndex) 逐句配音;voiceTag 继承 Character,支持回忆/破防等场合临时覆写;走 RunningHub Qwen3 TTS(webappId `2014603342701404161`)            |
+| 8  | 音效设计师      | Sfx                                                        | 门响 / 脚步 / 心跳 / 雨声等环境音与动作音,按 Shot + cue(enter/action/exit/ambient) 触发;后端暂复用 Qwen3 TTS,后续换独立 TTA                                        |
 | 9  | UI 设计师       | UiDesign                                                   | 存档 / 读档 / 对白栏 / 路线分支 / CG 鉴赏 / BGM 鉴赏界面的 `screens.rpy` 补丁与视觉 mood                                                                            |
 | 10 | Ren'Py 编码师   | RpyFile / AssetRegistry                                    | Storyboard + Cutscene + Bgm/Voice/Sfx/UI → 能跑的 .rpy;AssetRegistry 跟踪占位 ↔ 真资产映射                                                                          |
 | 11 | QA 测试员       | TestRun / BugReport                                        | 跑游戏、抓 bug、定位,产出 BugReport;**不直接改 .rpy**,只 `kick_back_to_coder`                                                                                  |
@@ -241,7 +242,7 @@
 - **QA 不能写 .rpy**,只能 `kick_back_to_coder` —— 真工作室分工,避免单一事实来源碎掉。
 - 角色 / 场景设计师都内建**占位优先**:同步返回 Solid 占位 uri,异步排真生成。
 - **视频类资产**(片头/片尾/章节过场 CG、关键剧情 CG)由**分镜师**统一 own(Cutscene 文档),参考图从角色/场景设计师的 URI 拉取;动态立绘归**角色设计师**(Character 文档扩展字段)。详见 §3.5。
-- **音频资产**(BGM / 对白 / SFX)v0.5 起纳入生成管线,三位 POC 各管一类:BGM 走 suno(独立 client),对白/SFX 走 RunningHub TTS。占位阶段 Ren'Py 端可直接 `play music/voice/sound <占位 ogg>` 或整段省略,Stage B 原地替换。
+- **音频资产**(BGM / 对白 / SFX)v0.5 起纳入生成管线,三位 POC 各管一类:三者**统一走 RunningHub**(BGM → SunoV5,对白 → Qwen3 TTS,SFX 暂复用 Qwen3 TTS),不再单封 suno client。占位阶段 Ren'Py 端可直接 `play music/voice/sound <占位 ogg>` 或整段省略,Stage B 原地替换。
 - **UI 设计师**归属于 v0.5 扩员;v0.2~v0.4 产出的 .rpy 先用 Ren'Py 默认 `screens.rpy`,UI 设计师在后续版本开始生成替换补丁。
 
 ---
@@ -333,7 +334,7 @@ async function plan() {
 - [ ] `renpy.input` 默认值里的中文标点 Ren'Py 8.x 兼容性
 - [ ] Planner 选型:沿用 HOGI 的 Gemini 2.5/3.0(依赖 thinking signature),还是切 Claude/GPT?暂定 Gemini。
 - [ ] RunningHub 各模型的**实测产出质量/单价/限流**:目前只定"用哪几个",首选/备选的取舍等真跑过再拍板。
-- [ ] RunningHub OpenAPI 的真实 `webappId` 与输入节点 ID / fieldName:smoke test 只验到握手层,跑图还需登录 RunningHub 控制台看每个 AI-App 的"API 调用"面板核对。
+- [X] RunningHub OpenAPI 的真实 `webappId` 与输入节点 ID / fieldName:v0.5+ 已把 8 个 AppKey 的 `webappId` + `fields[]` 核对完成登记在 [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts)(真 key smoke test 仍是 TODO)。
 - [ ] 音频生成(BGM / SFX / 语音):v1 范围外。
 - [ ] galgame 标配 UI(存档点、多路线合流、CG 鉴赏、BGM 鉴赏):v2 范围。
 - [ ] 本仓库何时 `git init` + 首次 push 到 GitHub(当前还是本地工作区)。
@@ -353,7 +354,7 @@ async function plan() {
 - [X] [src/planner/index.ts](src/planner/index.ts) + [src/index.ts](src/index.ts) barrel
 - [X] `package.json` / `tsconfig.json` / `pnpm-lock.yaml`,`pnpm typecheck` + `pnpm build` 通过
 - [X] `README.md` + `.gitignore` + `.env.example` + `git init` + push 到 GitHub
-- [X] RunningHub 最小 smoke test(文生图握手)—— [scripts/runninghub-smoke.mjs](scripts/runninghub-smoke.mjs) 实测通路:真 key → `code=1 webapp not exists`(认证通过,卡参数),假 key → `code=301 user not exist`,认证 + JSON 通路均 OK。真实 `webappId` 仍需登录 RunningHub 控制台核对,留到 v0.3 封 client 时细化
+- [X] RunningHub 最小 smoke test(文生图握手)—— [scripts/runninghub-smoke.mjs](scripts/runninghub-smoke.mjs) 实测通路:真 key → `code=1 webapp not exists`(认证通过,卡参数),假 key → `code=301 user not exist`,认证 + JSON 通路均 OK。v0.5+ 协议已迁到 `/openapi/v2/run/ai-app/{webappId}` + `Authorization: Bearer`,`webappId` 也核对完成(smoke 脚本本身待升级)
 
 ### v0.2 最小闭环(代码已落地,未跑过端到端真实 API)
 
@@ -372,20 +373,20 @@ async function plan() {
 **v0.3a(当前)——LLM provider + 资产后端客户端就位**
 
 - [X] LlmClient 支持 AWS Bedrock:`ClaudeLlmClient` 在 `CLAUDE_CODE_USE_BEDROCK=1` 时走 `@anthropic-ai/bedrock-sdk`,否则走 `@anthropic-ai/sdk`;模型默认 `anthropic.claude-sonnet-4-5-20250929-v1:0` / `claude-sonnet-4-6`
-- [X] [src/executers/common/runninghub-client.ts](src/executers/common/runninghub-client.ts):`HttpRunningHubClient` 封装 `/task/openapi/ai-app/run` + `/status` + `/outputs`,fetch 可注入便于测试;`AiAppSchema` 把 `apiId`(`api-xxx`)→ `webappId` + promptNode/referenceImageNode
+- [X] [src/executers/common/runninghub-client.ts](src/executers/common/runninghub-client.ts):`HttpRunningHubClient` 封装 `/openapi/v2/run/ai-app/{webappId}`(`Authorization: Bearer`)+ `/task/openapi/status` + `/task/openapi/outputs`,fetch 可注入便于测试;`AiAppSchema.fields[]`(role × nodeId × fieldName × defaultValue × optional × fieldData)支持任意 node 布局
 - [X] `.env.example` 更新为 Bedrock-first;`pnpm test` 55 个用例全绿
-- [ ] RunningHub AI-App schemas 登记(登录控制台 → "API 调用"面板,把 §3.5 表里 6 个模型的 `webappId`/`promptNodeId`/`referenceImageNodeId` 真实值填进一个 schema registry,例如 [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts)
+- [X] RunningHub AI-App schemas 登记真值:8 个 AppKey(MJ v7 / Nanobanana2 ×2 / Seedance ×2 / Qwen3 TTS ×2 / SunoV5)全部在 [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts) 按官方 curl 对齐 `webappId` / `fields[]`
 
 **v0.3b —— 角色 / 场景设计师接入(图像路径)**
 
-- [X] [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts):6 个 AI-App 的 schema 注册表(`webappId`/`promptNodeId` 等字段为 `TODO-` 占位,等控制台核对后覆盖);`isSchemaConfigured` 校验
+- [X] [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts):8 个 AI-App 的 schema 注册表,v0.5+ 已登记真 `webappId` + `fields[]`;`isSchemaConfigured` 校验真值 + 数字 webappId
 - [X] [src/executers/common/run-image-task.ts](src/executers/common/run-image-task.ts):submit+poll 通用 helper(超时 / onProgress / error 回调,测试友好)
 - [X] [src/assets/registry.ts](src/assets/registry.ts) + [src/assets/download.ts](src/assets/download.ts) + [src/assets/swap.ts](src/assets/swap.ts):AssetRegistry JSON 持久化、资产下载到 `<gameDir>/images/...`、`swapAssetPlaceholder` 下载→upsert 一把梭;失败路径用 `markAssetError`
 - [X] [src/executers/character-designer/generate-main-image.ts](src/executers/character-designer/generate-main-image.ts):`generateCharacterMainImage`(立绘主图)
 - [X] [src/executers/scene-designer/generate-background.ts](src/executers/scene-designer/generate-background.ts):`generateSceneBackground`(背景图)
 - [X] Coder 识别 registry:`renderScriptRpy(planner, storyboarder, assetRegistry?)` 有 ready 条目就吐 `image bg_x = "images/..."`,没有就 `Solid(...)` 占位
 - [X] 测试:13 文件 91 用例全绿(新增 36:registry/download/swap/image-task/schemas/char-gen/scene-gen/coder-registry)
-- [ ] RunningHub AI-App schemas 登记真值(登录控制台 → §3.5 表 6 个 AI-App 的 "API 调用" 面板 → 覆盖 `PLACEHOLDER_APP_SCHEMAS`)—— 真跑图/视频前必须做
+- [X] RunningHub AI-App schemas 登记真值(v0.5+ 已把 8 个 AppKey 的 `webappId` + `fields[]` 改为真值,见 [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts);客户端协议同步迁到 `/openapi/v2/run/ai-app/{webappId}` + `Authorization: Bearer`)
 - [ ] 表情差分 + 道具图 + 时段/光照变体(用同样的 runImageTask 路径再封 2 个 executer)
 - [ ] 典型修改 e2e 冒烟:跑 v0.2 pipeline → 调 `generateCharacterMainImage` / `generateSceneBackground` → 重渲染 script.rpy → `renpy.exe lint` 通过
 
@@ -393,10 +394,10 @@ async function plan() {
 
 - [X] 分镜师 Cutscene 识别字段([src/pipeline/types.ts](src/pipeline/types.ts) 的 `StoryboarderOutputCutscene` + storyboarder system prompt 描述:`kind: transition | reference`,配合 `referenceSceneName` / `referenceCharacterName`)
 - [X] Coder 识别 cutscene:有 ready 视频则吐 `$ renpy.movie_cutscene("videos/cut/shot_N.mp4")`;没有就 `scene bg_black with fade` + caption 占位(黑幕合法 Stage A)
-- [X] [src/executers/storyboarder/generate-cutscene.ts](src/executers/storyboarder/generate-cutscene.ts):`generateCutsceneVideo` 复用 `runImageTask`,`transition` 走 `CUTSCENE_IMAGE_TO_VIDEO`,`reference` 走 `CUTSCENE_REFERENCE_VIDEO`,产物落 `videos/cut/shot_N.mp4`
+- [X] [src/executers/storyboarder/generate-cutscene.ts](src/executers/storyboarder/generate-cutscene.ts):`generateCutsceneVideo` 复用 `runImageTask`,v0.5+ 起两种 `kind` 都路由到 `CUTSCENE_IMAGE_TO_VIDEO`(Seedance2.0 图生视频);多图参考场景由 caller 先走 Nanobanana2 合成首帧,再喂进来。产物落 `videos/cut/shot_N.mp4`
 - [X] 测试:coder 加 2 个 cutscene 用例(占位 + 真视频绑定),storyboarder executer 加 3+3 用例(含 reference 缺参校验)
-- [ ] RunningHub 视频 AI-App schemas 真值登记(同 v0.3b 图像模型一起,登录 RunningHub 控制台核对 `CUTSCENE_IMAGE_TO_VIDEO` / `CUTSCENE_REFERENCE_VIDEO` 的 `webappId`/`promptNodeId`/`referenceImageNodeId` 后覆盖 `PLACEHOLDER_APP_SCHEMAS`)
-- [ ] 角色动态立绘(`seedance2.0/多模态视频`)可选 —— 本版 schema 已占位(`CHARACTER_DYNAMIC_SPRITE`),executer 延后
+- [X] RunningHub 视频 AI-App schemas 真值登记(Seedance2.0 webappId `2037048798156951553`,fields 完整覆盖 first_frame / last_frame / duration / ratio / resolution / prompt)
+- [ ] 角色动态立绘(`Seedance2.0 图生视频`)可选 —— 本版 schema 已登记真值(`CHARACTER_DYNAMIC_SPRITE`),executer 延后
 - [ ] 视频在 Ren'Py 里的性能实测(`renpy.movie_cutscene` 播放、首帧占位、WebM 转码策略)
 
 ### v0.4 修改闭环
@@ -412,14 +413,14 @@ async function plan() {
 ### v0.5 员工扩招(音频 + UI 骨架)
 
 - [X] `.env` 补齐 AWS Bedrock 三件套(`CLAUDE_CODE_USE_BEDROCK`/`AWS_REGION`/`AWS_BEARER_TOKEN_BEDROCK`),LLM 链路可以真跑
-- [X] RunningHub schema 迁到 `api-448183xxx` 系列(旧 `api-42xxxx` / `api-43xxxx` 全作废);新增 `VOICE_LINE` / `SFX` 两个 AppKey(共用 minimax/speech-2.8-hd 的 apiId);`CHARACTER_DYNAMIC_SPRITE` 与 `CUTSCENE_REFERENCE_VIDEO` 合并共用 seedance2.0 多模态 apiId 条目
+- [X] RunningHub schema v0.5+ 迁到真 `webappId` + `/openapi/v2/run/ai-app/{webappId}` 协议(`Authorization: Bearer`,不再 body.apiKey);登记 8 个 AppKey(新增 `VOICE_LINE` / `SFX` / `BGM_TRACK`,删 `CUTSCENE_REFERENCE_VIDEO` 改由 Nanobanana2 合首帧 → Seedance 图生视频替代);客户端 `AiAppSchema` 升级为 `fields[]`(role × nodeId × fieldName × defaultValue × optional × fieldData),caller 只传 `role + value`
 - [X] 4 个新文档 schema([src/schema/galgame-workspace.ts](src/schema/galgame-workspace.ts):`BgmTrack` / `VoiceLine` / `Sfx` / `UiDesign`),`DocumentKind` / `WorkspaceDocument` 联合类型同步扩
 - [X] 4 位新 POC tool-set 契约([src/workflows/galgame-workflows.ts](src/workflows/galgame-workflows.ts):`MusicDirectorTools` / `VoiceDirectorTools` / `SfxDesignerTools` / `UiDesignerTools`);`PocRole` 扩到 11 人;[src/index.ts](src/index.ts) 同步 barrel
 - [X] 运行时 `AssetRegistry.AssetType` 扩:`bgm_track` / `voice_line` / `sfx`
-- [ ] RunningHub 控制台抄真 `webappId` / `promptNodeId` / `promptFieldName`(7 个 AppKey,含新 `VOICE_LINE`)—— 这一条过关后,整条"占位 → 真资产"链条才能真跑
+- [X] RunningHub 控制台核对真 `webappId` + node 布局,8 个 AppKey 的 schema 全部登记真值(`isSchemaConfigured` 全返 true)—— 这一条过关后,整条"占位 → 真资产"链条才能真跑;下一步是真 key smoke test(跑一次 Midjourney v7 文生图 → poll → 拿 URL)
 - [ ] 配音导演 executer:`generate-voice-line.ts` 走 `runImageTask`(submit+poll 逻辑一致,只改产物扩展名为 `.mp3` / `.ogg`),产物落 `voice/scene_<N>/line_<i>.ogg`,Coder 在对白行前插 `voice "voice/..."`
 - [ ] 音效设计师 executer:`generate-sfx.ts`,产物落 `audio/sfx/shot_<N>_<cue>.ogg`,Coder 按 cue 映射到 Shot 头/尾的 `play sound` 语句
-- [ ] 音乐总监 executer:`generate-bgm-track.ts` 走 suno(独立 client,不复用 RunningHub),产物落 `audio/bgm/<slug>.ogg`,Coder 在进入 Scene/Chapter/Route 时插 `play music "audio/bgm/..."`
+- [ ] 音乐总监 executer:`generate-bgm-track.ts` 走 RunningHub SunoV5(`BGM_TRACK` AppKey,webappId `1972977443998928898`),产物落 `audio/bgm/<slug>.ogg`,Coder 在进入 Scene/Chapter/Route 时插 `play music "audio/bgm/..."`
 - [ ] UI 设计师 executer:`generate-ui-patch.ts` 走 LLM(不走 RunningHub),按 `screen` 枚举产出 `screens.rpy` 补丁,Coder merge 到最终 .rpy
 - [ ] Pipeline 接线:`runPipeline` 在 Coder 前多跑 4 步(按"单章节前 N 句对白 / N 个镜头 / 1 条 BGM / 1 套主菜单 UI"的最小集合)
 

@@ -60,6 +60,9 @@ export type {
   RunningHubTaskResult,
   RunningHubTaskStatus,
   AiAppSchema,
+  AiAppNodeFieldSchema,
+  AiAppNodeInput,
+  AiAppFieldRole,
   FetchLike,
   HttpRunningHubClientOptions,
 } from './executers/common/runninghub-client.js';
@@ -71,8 +74,8 @@ export {
 
 export {
   RUNNINGHUB_APP_IDENTITIES,
-  PLACEHOLDER_APP_SCHEMAS,
-  getAppApiId,
+  RUNNINGHUB_APP_SCHEMAS,
+  getAppWebappId,
   isSchemaConfigured,
 } from './executers/common/runninghub-schemas.js';
 export type {
@@ -133,7 +136,6 @@ export type {
 export {
   generateCutsceneVideo,
   buildCutscenePrompt,
-  appKeyForCutscene,
   logicalKeyForCutsceneShot,
 } from './executers/storyboarder/generate-cutscene.js';
 export type {

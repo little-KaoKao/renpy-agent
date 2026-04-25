@@ -1,8 +1,13 @@
 // 场景设计师:背景图生成入口。结构与 character-designer/generate-main-image 对称,
-// 只差 apiId / prompt 组装 / logicalKey 前缀。
+// 只差 appKey / prompt 组装 / logicalKey 前缀。
+//
+// 后端:Nanobanana2 全能图片 2.0(`SCENE_BACKGROUND` 走 webappId 2027211316242423809
+// 的文生图模式,caller 不传 reference_image_*,schema 把那些字段标 optional)。
 
-import type { RunningHubClient } from '../common/runninghub-client.js';
-import { getAppApiId } from '../common/runninghub-schemas.js';
+import type {
+  AiAppNodeInput,
+  RunningHubClient,
+} from '../common/runninghub-client.js';
 import { runImageTask } from '../common/run-image-task.js';
 import { inferExtensionFromUrl, slugForFilename } from '../../assets/download.js';
 import type { FetchLike } from '../../assets/download.js';
@@ -44,17 +49,17 @@ export async function generateSceneBackground(
   params: GenerateSceneBackgroundParams,
 ): Promise<GenerateSceneBackgroundResult> {
   const logicalKey = `scene:${slugForFilename(params.sceneName)}:bg`;
-  const apiId = getAppApiId('SCENE_BACKGROUND');
   const prompt = buildSceneBackgroundPrompt(
     params.description,
     params.timeOfDay,
     params.styleHint,
   );
+  const inputs: AiAppNodeInput[] = [{ role: 'prompt', value: prompt }];
 
   try {
     const task = await runImageTask({
-      apiId,
-      prompt,
+      appKey: 'SCENE_BACKGROUND',
+      inputs,
       client: params.client,
       ...(params.pollIntervalMs !== undefined ? { pollIntervalMs: params.pollIntervalMs } : {}),
       ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),

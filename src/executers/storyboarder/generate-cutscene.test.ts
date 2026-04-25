@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  appKeyForCutscene,
   buildCutscenePrompt,
   generateCutsceneVideo,
   logicalKeyForCutsceneShot,
@@ -32,15 +31,6 @@ describe('buildCutscenePrompt', () => {
   });
 });
 
-describe('appKeyForCutscene', () => {
-  it('maps transition → CUTSCENE_IMAGE_TO_VIDEO', () => {
-    expect(appKeyForCutscene('transition')).toBe('CUTSCENE_IMAGE_TO_VIDEO');
-  });
-  it('maps reference → CUTSCENE_REFERENCE_VIDEO', () => {
-    expect(appKeyForCutscene('reference')).toBe('CUTSCENE_REFERENCE_VIDEO');
-  });
-});
-
 describe('logicalKeyForCutsceneShot', () => {
   it('includes the shot number for stable Stage A ↔ B binding', () => {
     expect(logicalKeyForCutsceneShot(3)).toBe('cutscene:shot_3');
@@ -56,7 +46,7 @@ describe('generateCutsceneVideo', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('submits transition task, downloads mp4, upserts registry with cutscene type', async () => {
+  it('submits transition task with first_frame input and downloads mp4', async () => {
     const client: RunningHubClient = {
       submitTask: vi.fn().mockResolvedValue({ taskId: 'v1' }),
       pollTask: vi.fn().mockResolvedValue({
@@ -92,8 +82,11 @@ describe('generateCutsceneVideo', () => {
     expect(reloaded.entries[0]!.logicalKey).toBe('cutscene:shot_2');
     expect(client.submitTask).toHaveBeenCalledWith(
       expect.objectContaining({
-        apiId: 'api-448183116', // CUTSCENE_IMAGE_TO_VIDEO (seedance2.0/图生视频)
-        referenceImageUri: 'https://cdn/scene-first-frame.jpg',
+        appKey: 'CUTSCENE_IMAGE_TO_VIDEO',
+        inputs: expect.arrayContaining([
+          expect.objectContaining({ role: 'first_frame', value: 'https://cdn/scene-first-frame.jpg' }),
+          expect.objectContaining({ role: 'prompt' }),
+        ]),
       }),
     );
   });
@@ -127,8 +120,9 @@ describe('generateCutsceneVideo', () => {
     });
 
     expect(result.entry.realAssetLocalPath).toBe('videos/cut/shot_7.mp4');
+    // v0.5+:两种 kind 都路由到 CUTSCENE_IMAGE_TO_VIDEO。
     expect(client.submitTask).toHaveBeenCalledWith(
-      expect.objectContaining({ apiId: 'api-448183127' }), // CUTSCENE_REFERENCE_VIDEO (seedance2.0/多模态视频)
+      expect.objectContaining({ appKey: 'CUTSCENE_IMAGE_TO_VIDEO' }),
     );
   });
 

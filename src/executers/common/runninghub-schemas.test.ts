@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  PLACEHOLDER_APP_SCHEMAS,
   RUNNINGHUB_APP_IDENTITIES,
-  getAppApiId,
+  RUNNINGHUB_APP_SCHEMAS,
+  getAppWebappId,
   isSchemaConfigured,
 } from './runninghub-schemas.js';
 
@@ -16,58 +16,86 @@ describe('runninghub-schemas registry', () => {
         'CHARACTER_DYNAMIC_SPRITE',
         'SCENE_BACKGROUND',
         'CUTSCENE_IMAGE_TO_VIDEO',
-        'CUTSCENE_REFERENCE_VIDEO',
         'VOICE_LINE',
         'SFX',
+        'BGM_TRACK',
       ].sort(),
     );
   });
 
-  it('getAppApiId returns the apiId from identity registry', () => {
-    expect(getAppApiId('CHARACTER_MAIN_IMAGE')).toBe('api-448183249');
-    expect(getAppApiId('VOICE_LINE')).toBe('api-448183268');
+  it('binds CHARACTER_MAIN_IMAGE to the real Midjourney v7 webappId', () => {
+    expect(getAppWebappId('CHARACTER_MAIN_IMAGE')).toBe('1941094122503749633');
   });
 
-  it('every app has a placeholder schema entry (direct or shared)', () => {
-    for (const identity of Object.values(RUNNINGHUB_APP_IDENTITIES)) {
-      expect(PLACEHOLDER_APP_SCHEMAS[identity.apiId]).toBeDefined();
+  it('binds voice line and bgm to their real webappIds', () => {
+    expect(getAppWebappId('VOICE_LINE')).toBe('2014603342701404161');
+    expect(getAppWebappId('BGM_TRACK')).toBe('1972977443998928898');
+  });
+
+  it('every app has a schema entry, and every schema has at least one field', () => {
+    for (const key of Object.keys(RUNNINGHUB_APP_IDENTITIES)) {
+      const schema = RUNNINGHUB_APP_SCHEMAS[key as keyof typeof RUNNINGHUB_APP_SCHEMAS];
+      expect(schema).toBeDefined();
+      expect(schema!.fields.length).toBeGreaterThan(0);
     }
   });
 
-  it('dynamic-sprite and reference-video share a single schema entry', () => {
-    expect(getAppApiId('CHARACTER_DYNAMIC_SPRITE')).toBe(
-      getAppApiId('CUTSCENE_REFERENCE_VIDEO'),
+  it('schema webappId matches identity webappId', () => {
+    for (const key of Object.keys(RUNNINGHUB_APP_IDENTITIES) as Array<
+      keyof typeof RUNNINGHUB_APP_IDENTITIES
+    >) {
+      expect(RUNNINGHUB_APP_SCHEMAS[key].webappId).toBe(
+        RUNNINGHUB_APP_IDENTITIES[key].webappId,
+      );
+    }
+  });
+
+  it('Nanobanana2 character-expression and scene-background share one webappId', () => {
+    expect(getAppWebappId('CHARACTER_EXPRESSION')).toBe(getAppWebappId('SCENE_BACKGROUND'));
+  });
+
+  it('Seedance2.0 dynamic-sprite and cutscene-image-to-video share one webappId', () => {
+    expect(getAppWebappId('CHARACTER_DYNAMIC_SPRITE')).toBe(
+      getAppWebappId('CUTSCENE_IMAGE_TO_VIDEO'),
     );
   });
 
-  it('voice-line and sfx share a single schema entry', () => {
-    expect(getAppApiId('VOICE_LINE')).toBe(getAppApiId('SFX'));
+  it('Qwen3 TTS voice-line and sfx share one webappId', () => {
+    expect(getAppWebappId('VOICE_LINE')).toBe(getAppWebappId('SFX'));
   });
 
-  it('all placeholder schemas are flagged unconfigured', () => {
-    for (const schema of Object.values(PLACEHOLDER_APP_SCHEMAS)) {
-      expect(isSchemaConfigured(schema)).toBe(false);
+  it('isSchemaConfigured accepts all real registered schemas', () => {
+    for (const schema of Object.values(RUNNINGHUB_APP_SCHEMAS)) {
+      expect(isSchemaConfigured(schema)).toBe(true);
     }
   });
 
-  it('isSchemaConfigured returns true once all TODO strings are replaced', () => {
+  it('isSchemaConfigured rejects TODO-prefixed webappId', () => {
     expect(
       isSchemaConfigured({
-        webappId: '123',
-        promptNodeId: '6',
-        promptFieldName: 'text',
+        webappId: 'TODO-xxx',
+        displayName: 'x',
+        fields: [{ nodeId: '1', fieldName: 'text', role: 'prompt' }],
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it('isSchemaConfigured catches leftover TODO in optional fields', () => {
+  it('isSchemaConfigured rejects non-numeric webappId', () => {
     expect(
       isSchemaConfigured({
-        webappId: '123',
-        promptNodeId: '6',
-        promptFieldName: 'text',
-        referenceImageNodeId: 'TODO-nodeId',
-        referenceImageFieldName: 'image',
+        webappId: 'api-12345',
+        displayName: 'x',
+        fields: [{ nodeId: '1', fieldName: 'text', role: 'prompt' }],
+      }),
+    ).toBe(false);
+  });
+
+  it('isSchemaConfigured rejects TODO in field ids', () => {
+    expect(
+      isSchemaConfigured({
+        webappId: '1234567890123456789',
+        displayName: 'x',
+        fields: [{ nodeId: 'TODO-nodeId', fieldName: 'text', role: 'prompt' }],
       }),
     ).toBe(false);
   });
