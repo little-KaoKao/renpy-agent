@@ -22,6 +22,9 @@ define config.intra_transition = dissolve
 define config.after_load_transition = None
 define config.end_game_transition = None
 
-define config.window_icon = "gui/window_icon.png"
+# window_icon intentionally left unset: Stage A placeholder projects ship
+# without gui/ binaries. Ren'Py falls back to a built-in icon. Wire it up in
+# Stage B once a real icon is generated.
+# define config.window_icon = "gui/window_icon.png"
 
 define build.include_old_themes = False

@@ -143,6 +143,32 @@ interface RhOutputItem {
   readonly fileUrl?: string;
   readonly fileType?: string;
   readonly url?: string;
+  readonly nodeId?: string;
+}
+
+/**
+ * RunningHub AI-App 任务的 outputs 数组偶尔会把辅助产物(例如 SunoV5 的 prompt
+ * `.txt` metadata)和真正的主产物混在一起,且主产物不保证排在首位。所以不能用
+ * `data[0]`,必须按 fileType 白名单挑出真的音频/图片/视频。
+ *
+ * 规则:跳过 txt / json / md 这类 metadata,返回第一个剩下的。全部是 metadata
+ * 的情况下才 fallback 到 data[0],让 caller 至少拿到点东西用作诊断。
+ */
+const OUTPUT_METADATA_FILE_TYPES = new Set(['txt', 'json', 'md', 'log']);
+
+function pickPrimaryOutputUri(
+  items: ReadonlyArray<RhOutputItem>,
+): { readonly uri: string } | undefined {
+  for (const item of items) {
+    const uri = item.fileUrl ?? item.url;
+    if (!uri) continue;
+    const type = (item.fileType ?? '').toLowerCase();
+    if (type && OUTPUT_METADATA_FILE_TYPES.has(type)) continue;
+    return { uri };
+  }
+  const fallback = items[0];
+  const uri = fallback?.fileUrl ?? fallback?.url;
+  return uri ? { uri } : undefined;
 }
 
 /**
@@ -275,15 +301,14 @@ export class HttpRunningHubClient implements RunningHubClient {
         errorMessage: 'outputs succeeded but data was not an array of files',
       };
     }
-    const first = outputsEnv.data[0] as RhOutputItem | undefined;
-    const outputUri = first?.fileUrl ?? first?.url;
-    if (!outputUri) {
+    const picked = pickPrimaryOutputUri(outputsEnv.data as ReadonlyArray<RhOutputItem>);
+    if (!picked) {
       return {
         status: 'error',
         errorMessage: 'task succeeded but outputs envelope had no fileUrl',
       };
     }
-    return { status: 'done', outputUri };
+    return { status: 'done', outputUri: picked.uri };
   }
 
   private buildNodeInfoList(

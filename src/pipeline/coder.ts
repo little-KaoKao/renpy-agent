@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import type { PlannerOutput, StoryboarderOutput } from './types.js';
@@ -75,6 +75,46 @@ export async function writeGameProject(params: WriteGameFilesParams): Promise<vo
     writeFile(resolve(params.gameDir, 'gui.rpy'), files.guiRpy, 'utf8'),
     writeFile(resolve(params.gameDir, 'screens.rpy'), files.screensRpy, 'utf8'),
   ]);
+  // Ren'Py's default screens.rpy / gui.rpy reference binaries that the .rpy
+  // templates alone don't cover: gui/button/*.png, gui/bar/*.png,
+  // gui/window_icon.png, SourceHanSansLite.ttf, etc. Ship a copy of the
+  // baiying-demo static pack as a default. Stage B can overwrite individual
+  // pieces later via AssetRegistry.
+  await copyTemplateBinaries(params.gameDir);
+}
+
+async function copyTemplateBinaries(gameDir: string): Promise<void> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const templateDir = resolve(here, '../templates');
+  try {
+    await copyDirectoryRecursive(templateDir, gameDir, (name) => !name.endsWith('.rpy'));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      // No template tree in this build (unit tests without the copy-templates
+      // step). Coder is expected to still work with .rpy-only projects.
+      return;
+    }
+    throw err;
+  }
+}
+
+async function copyDirectoryRecursive(
+  src: string,
+  dst: string,
+  filter: (name: string) => boolean = () => true,
+): Promise<void> {
+  await mkdir(dst, { recursive: true });
+  const entries = await readdir(src);
+  for (const name of entries) {
+    const srcPath = resolve(src, name);
+    const dstPath = resolve(dst, name);
+    const st = await stat(srcPath);
+    if (st.isDirectory()) {
+      await copyDirectoryRecursive(srcPath, dstPath, filter);
+    } else if (filter(name)) {
+      await copyFile(srcPath, dstPath);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

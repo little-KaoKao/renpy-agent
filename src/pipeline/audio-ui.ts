@@ -9,10 +9,13 @@
 // 失败策略:单条资产失败不整体失败,executer 已 markAssetError,Coder 查 registry
 // 时视为未命中走占位;stage 只汇总 ok/err 数,日志透出。
 //
-// 并发:四组互相独立,用 Promise.all。每组内部串行(RunningHub 限速 + 便于调试)。
+// 并发:BGM / Voice / SFX 三组都写同一个 `asset-registry.json`,load→compute→save
+// 不是原子的,所以它们串行执行(组间排队、组内再串行),避免并发写时互相覆盖
+// 彼此的 entry。UI 批不触碰 registry,可以和 RunningHub 组并发。
 
 import type { LlmClient } from '../llm/types.js';
 import type { RunningHubClient } from '../executers/common/runninghub-client.js';
+import type { FetchLike } from '../assets/download.js';
 import type {
   PlannerOutput,
   StoryboarderOutput,
@@ -63,6 +66,8 @@ export interface RunAudioUiStageParams {
   readonly uiMoodTag?: string;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly pollIntervalMs?: number;
+  /** Override the fetch used by asset downloads (tests, proxies). */
+  readonly fetchFn?: FetchLike;
 }
 
 const DEFAULT_VOICE_TAG =
@@ -86,12 +91,19 @@ export async function runAudioUiStage(
       `sfx=${sfxPlan.length} ui=${uiPlan.length}`,
   );
 
-  const [bgmResult, voiceResult, sfxResult, uiResult] = await Promise.all([
-    runBgmBatch(bgmPlan, params, log),
-    runVoiceBatch(voicePlan, params, log),
-    runSfxBatch(sfxPlan, params, log),
+  // UI batch does not share registry state with the RunningHub batches, so it
+  // can run concurrently with them. The three registry-writing batches must
+  // run sequentially to avoid racing on `asset-registry.json`.
+  const [registryBatches, uiResult] = await Promise.all([
+    (async () => {
+      const bgm = await runBgmBatch(bgmPlan, params, log);
+      const voice = await runVoiceBatch(voicePlan, params, log);
+      const sfx = await runSfxBatch(sfxPlan, params, log);
+      return { bgm, voice, sfx };
+    })(),
     runUiBatch(uiPlan, params, log),
   ]);
+  const { bgm: bgmResult, voice: voiceResult, sfx: sfxResult } = registryBatches;
 
   const stats: AudioUiStageStats = {
     bgm: bgmResult.stats,
@@ -212,6 +224,7 @@ async function runBgmBatch(
         client: params.runningHubClient,
         ...(params.pollIntervalMs !== undefined ? { pollIntervalMs: params.pollIntervalMs } : {}),
         ...(params.sleep !== undefined ? { sleep: params.sleep } : {}),
+        ...(params.fetchFn !== undefined ? { fetchFn: params.fetchFn } : {}),
       });
       ok++;
     } catch (e) {
@@ -247,6 +260,7 @@ async function runVoiceBatch(
         client: params.runningHubClient,
         ...(params.pollIntervalMs !== undefined ? { pollIntervalMs: params.pollIntervalMs } : {}),
         ...(params.sleep !== undefined ? { sleep: params.sleep } : {}),
+        ...(params.fetchFn !== undefined ? { fetchFn: params.fetchFn } : {}),
       });
       ok++;
     } catch (e) {
@@ -277,6 +291,7 @@ async function runSfxBatch(
         client: params.runningHubClient,
         ...(params.pollIntervalMs !== undefined ? { pollIntervalMs: params.pollIntervalMs } : {}),
         ...(params.sleep !== undefined ? { sleep: params.sleep } : {}),
+        ...(params.fetchFn !== undefined ? { fetchFn: params.fetchFn } : {}),
       });
       ok++;
     } catch (e) {

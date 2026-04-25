@@ -423,6 +423,30 @@ describe('HttpRunningHubClient.pollTask', () => {
     expect((await client.pollTask('t1')).outputUri).toBe('https://cdn.rh.example/fallback.png');
   });
 
+  it('skips metadata txt output and picks the first real audio file (SunoV5 shape)', async () => {
+    const { fetchFn } = makeFetch({
+      '/task/openapi/status': () => ({ json: { code: 0, data: 'SUCCESS' } }),
+      '/task/openapi/outputs': () => ({
+        json: {
+          code: 0,
+          data: [
+            { fileUrl: 'https://cdn.rh.example/prompt.txt', fileType: 'txt' },
+            { fileUrl: 'https://cdn.rh.example/track1.flac', fileType: 'flac' },
+            { fileUrl: 'https://cdn.rh.example/track2.flac', fileType: 'flac' },
+          ],
+        },
+      }),
+    });
+    const client = new HttpRunningHubClient({
+      apiKey: FAKE_KEY,
+      appSchemas: TEST_SCHEMAS,
+      fetchFn,
+    });
+    const res = await client.pollTask('t1');
+    expect(res.status).toBe('done');
+    expect(res.outputUri).toBe('https://cdn.rh.example/track1.flac');
+  });
+
   it('bubbles up HTTP errors as RunningHubError', async () => {
     const { fetchFn } = makeFetch({
       '/task/openapi/status': () => ({ status: 500, text: 'server down' }),

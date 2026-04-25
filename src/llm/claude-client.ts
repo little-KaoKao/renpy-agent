@@ -3,7 +3,7 @@ import { AnthropicBedrock } from '@anthropic-ai/bedrock-sdk';
 import type { LlmChatParams, LlmClient, LlmResponse } from './types.js';
 
 export const CLAUDE_DIRECT_DEFAULT_MODEL = 'claude-sonnet-4-6';
-export const CLAUDE_BEDROCK_DEFAULT_MODEL = 'anthropic.claude-sonnet-4-5-20250929-v1:0';
+export const CLAUDE_BEDROCK_DEFAULT_MODEL = 'us.anthropic.claude-sonnet-4-6';
 export const CLAUDE_DEFAULT_MAX_TOKENS = 4096;
 
 /** @deprecated kept for backward compat; prefer the direct/bedrock-specific constants */
