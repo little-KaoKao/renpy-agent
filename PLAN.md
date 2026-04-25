@@ -86,7 +86,6 @@
 ├── resources/
 │   └── renpy-storyboard/       # 分镜师 skill 的正式家
 └── docs/
-    ├── superpowers/            # 设计 spec + 实施 plan(与本 PLAN.md 配合)
     └── examples/
         └── baiying-demo/       # 手工占位优先 demo(Stage A 可行性 fixture)
             ├── game/           # Ren'Py 标准结构:script.rpy / gui.rpy / ...
