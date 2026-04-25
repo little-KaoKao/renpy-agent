@@ -92,6 +92,11 @@ export interface CutscenePipelineStats {
   readonly skipped: number;
 }
 
+export interface VisualPipelineStats {
+  readonly character: { readonly ok: number; readonly err: number };
+  readonly scene: { readonly ok: number; readonly err: number };
+}
+
 export interface PipelineResult {
   readonly storyName: string;
   readonly gamePath: string;
@@ -99,6 +104,7 @@ export interface PipelineResult {
   readonly writer: WriterOutput;
   readonly storyboarder: StoryboarderOutput;
   readonly testRun: TestRunResult;
+  readonly visual?: VisualPipelineStats;
   readonly audioUi?: AudioUiPipelineStats;
   readonly cutscene?: CutscenePipelineStats;
 }

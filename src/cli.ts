@@ -23,6 +23,7 @@ export type ParsedCliCommand =
       readonly storyName?: string;
       readonly audioUi?: boolean;
       readonly cutscene?: boolean;
+      readonly visual?: boolean;
       readonly resume?: boolean;
     }
   | {
@@ -78,6 +79,7 @@ function parseGenerateArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
   let storyName: string | undefined;
   let audioUi = false;
   let cutscene = false;
+  let visual = false;
   let resume = false;
   const positional: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -86,6 +88,8 @@ function parseGenerateArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
       audioUi = true;
     } else if (arg === '--cutscene') {
       cutscene = true;
+    } else if (arg === '--visual') {
+      visual = true;
     } else if (arg === '--resume') {
       resume = true;
     } else if (arg === '--name') {
@@ -104,6 +108,7 @@ function parseGenerateArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
   if (storyName !== undefined) (result as { storyName?: string }).storyName = storyName;
   if (audioUi) (result as { audioUi?: boolean }).audioUi = true;
   if (cutscene) (result as { cutscene?: boolean }).cutscene = true;
+  if (visual) (result as { visual?: boolean }).visual = true;
   if (resume) (result as { resume?: boolean }).resume = true;
   return result;
 }
@@ -246,7 +251,7 @@ function parseOrderFlag(flags: FlagMap, context: string): ReadonlyArray<number> 
 }
 
 const HELP_TEXT = `Usage:
-  renpy-agent generate [--name <slug>] [--audio-ui] [--cutscene] <inspiration text>
+  renpy-agent generate [--name <slug>] [--visual] [--audio-ui] [--cutscene] <inspiration text>
   renpy-agent modify character <story> --name <name> --visual "..." [--rebuild]
   renpy-agent modify dialogue  <story> --shot <N> --line <i> --text "..." [--rebuild]
   renpy-agent modify shots     <story> --order 3,1,2,4,5,6,7,8 [--rebuild]
@@ -255,10 +260,16 @@ const HELP_TEXT = `Usage:
   renpy-agent -h | --help
 
 Legacy form (still supported):
-  renpy-agent [--name <slug>] [--audio-ui] [--cutscene] [--resume] <inspiration text>
+  renpy-agent [--name <slug>] [--visual] [--audio-ui] [--cutscene] [--resume] <inspiration text>
 
 Options:
   --name <slug>   Story folder name (defaults to "story-YYYYMMDD-HHMMSS")
+  --visual        Generate character main images (MJv7) + scene backgrounds
+                  (Nanobanana2) before Coder runs. Without this flag, the game
+                  uses Stage-A Solid() placeholders for all visuals.
+                  Requires RUNNINGHUB_API_KEY. Single asset failures degrade
+                  back to Solid placeholders, don't collapse the pipeline.
+                  Equivalent env flag: RENPY_AGENT_VISUAL=1 (CLI flag wins).
   --audio-ui      Enable v0.5 audio + UI stage (BGM / voice / SFX / main_menu patch).
                   Requires RUNNINGHUB_API_KEY in the environment.
                   Equivalent env flag: RENPY_AGENT_AUDIO_UI=1 (CLI flag wins).
@@ -313,11 +324,12 @@ async function runGenerate(cmd: GenerateCommand): Promise<number> {
 
   const enableAudioUi = cmd.audioUi ?? process.env.RENPY_AGENT_AUDIO_UI === '1';
   const enableCutscene = cmd.cutscene ?? process.env.RENPY_AGENT_CUTSCENE === '1';
+  const enableVisual = cmd.visual ?? process.env.RENPY_AGENT_VISUAL === '1';
   let runningHubClient: RunningHubClient | undefined;
-  if (enableAudioUi || enableCutscene) {
+  if (enableAudioUi || enableCutscene || enableVisual) {
     const rhKey = process.env.RUNNINGHUB_API_KEY;
     if (!rhKey) {
-      const flag = enableAudioUi ? '--audio-ui' : '--cutscene';
+      const flag = enableVisual ? '--visual' : enableAudioUi ? '--audio-ui' : '--cutscene';
       console.error(
         `Error: ${flag} requires RUNNINGHUB_API_KEY to be set in the environment.`,
       );
@@ -336,11 +348,19 @@ async function runGenerate(cmd: GenerateCommand): Promise<number> {
       llm,
       enableAudioUi,
       enableCutscene,
+      enableVisual,
       ...(cmd.resume ? { resume: true } : {}),
       ...(runningHubClient !== undefined ? { runningHubClient } : {}),
     });
     console.log(`\n✅ Done. Game at: ${result.gamePath}`);
     console.log(`   Run:  renpy-sdk/renpy.exe "${result.gamePath}"`);
+    if (result.visual) {
+      const v = result.visual;
+      console.log(
+        `   visual: character ${v.character.ok}/${v.character.ok + v.character.err}, ` +
+          `scene ${v.scene.ok}/${v.scene.ok + v.scene.err}`,
+      );
+    }
     if (result.audioUi) {
       const s = result.audioUi;
       console.log(

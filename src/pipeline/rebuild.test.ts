@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { rebuildGameProject } from './rebuild.js';
-import { saveStoryWorkspace } from './workspace.js';
+import { saveStoryWorkspace, workspacePathsForGame } from './workspace.js';
 import { registryPathForGame, saveRegistry } from '../assets/registry.js';
 import { logicalKeyForCharacter } from '../assets/logical-key.js';
 import type { PlannerOutput, StoryboarderOutput, WriterOutput } from './types.js';
@@ -105,5 +105,59 @@ describe('rebuildGameProject', () => {
     await expect(
       rebuildGameProject({ storyName: 'missing-story', runtimeRoot, repoRoot: dir }),
     ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('merges valid ui patches from workspace/ui.json into screens.rpy', async () => {
+    const runtimeRoot = join(dir, 'runtime');
+    const gameDir = await seedWorkspace(runtimeRoot, 'demo');
+    const paths = workspacePathsForGame(gameDir);
+    await mkdir(paths.workspaceDir, { recursive: true });
+    const goodPatch = [
+      '# --- ui-patch: main_menu (mood: pastel) ---',
+      'screen main_menu():',
+      '    tag menu',
+      '    add Solid("#ffe7f0")',
+    ].join('\n');
+    await writeFile(
+      paths.uiPath,
+      JSON.stringify({
+        patches: [{ screen: 'main_menu', moodTag: 'pastel', rpyScreenPatch: goodPatch }],
+      }),
+      'utf8',
+    );
+
+    await rebuildGameProject({ storyName: 'demo', runtimeRoot, repoRoot: dir });
+
+    const screens = await readFile(join(gameDir, 'screens.rpy'), 'utf8');
+    expect(screens).toContain('# === renpy-agent UI patch: main_menu ===');
+    expect(screens).toContain('add Solid("#ffe7f0")');
+  });
+
+  it('drops invalid ui patches (e.g. font override) and still produces a runnable project', async () => {
+    const runtimeRoot = join(dir, 'runtime');
+    const gameDir = await seedWorkspace(runtimeRoot, 'demo');
+    const paths = workspacePathsForGame(gameDir);
+    await mkdir(paths.workspaceDir, { recursive: true });
+    const badPatch = [
+      '# --- ui-patch: main_menu (mood: pastel) ---',
+      'screen main_menu():',
+      '    tag menu',
+      '    text "Title":',
+      '        font "gui/font/NotoSansCJK-Regular.ttc"',
+    ].join('\n');
+    await writeFile(
+      paths.uiPath,
+      JSON.stringify({
+        patches: [{ screen: 'main_menu', moodTag: 'pastel', rpyScreenPatch: badPatch }],
+      }),
+      'utf8',
+    );
+
+    await rebuildGameProject({ storyName: 'demo', runtimeRoot, repoRoot: dir });
+
+    const screens = await readFile(join(gameDir, 'screens.rpy'), 'utf8');
+    // Invalid patch dropped — screens.rpy falls back to the plain template.
+    expect(screens).not.toContain('# === renpy-agent UI patch: main_menu ===');
+    expect(screens).not.toContain('NotoSansCJK');
   });
 });

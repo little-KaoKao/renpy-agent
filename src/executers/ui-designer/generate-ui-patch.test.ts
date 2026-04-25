@@ -111,4 +111,28 @@ describe('validateUiPatch', () => {
       '# --- ui-patch: main_menu (mood: x) ---\nscreen main_menu():\n    pass\nimport os\n';
     expect(() => validateUiPatch(bad, 'main_menu')).toThrow(/import/);
   });
+
+  it('rejects font property overrides (project ships only one font)', () => {
+    const bad = [
+      '# --- ui-patch: main_menu (mood: pastel) ---',
+      'screen main_menu():',
+      '    tag menu',
+      '    text "Title":',
+      '        size 54',
+      '        font "gui/font/NotoSansCJK-Regular.ttc"',
+    ].join('\n');
+    expect(() => validateUiPatch(bad, 'main_menu')).toThrow(/font/);
+  });
+
+  it('accepts text elements without a font property (inherit default)', () => {
+    const ok = [
+      '# --- ui-patch: main_menu (mood: pastel) ---',
+      'screen main_menu():',
+      '    tag menu',
+      '    text "Title":',
+      '        size 54',
+      '        color "#c47fa0"',
+    ].join('\n');
+    expect(() => validateUiPatch(ok, 'main_menu')).not.toThrow();
+  });
 });

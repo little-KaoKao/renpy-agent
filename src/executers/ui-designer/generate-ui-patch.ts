@@ -34,7 +34,10 @@ Rules:
 4. Stick to visible screen elements: \`frame\`, \`vbox\`, \`hbox\`, \`textbutton\`, \`text\`, \`add\`,
    \`imagebutton\`. All colors via named colors or hex like \`"#rrggbb"\`.
 5. Do NOT reference external image files (image backgrounds) — Ren'Py's default gui.rpy assets are fine.
-6. Keep it self-contained and under ~40 lines.`;
+6. Do NOT set a \`font "..."\` property on any text element. The project ships exactly one
+   font (SourceHanSansLite.ttf, wired through gui.text_font) and referencing any other font
+   file will crash at runtime. Just omit the font property — text elements inherit the default.
+7. Keep it self-contained and under ~40 lines.`;
 
 function buildUserPrompt(
   screen: UiDesign['screen'],
@@ -101,6 +104,10 @@ export function validateUiPatch(patch: string, screen: UiDesign['screen']): void
     [/^\s*init\s*:/m, 'init block'],
     [/^\s*default\s+/m, 'default statement'],
     [/^\s*style\s+\w/m, 'style override'],
+    // `font "<path>"` would reference a file the project doesn't ship. The
+    // only bundled font is SourceHanSansLite.ttf, already wired through
+    // gui.text_font — text elements should inherit it, not override it.
+    [/^\s*font\s+["']/m, 'font property'],
   ];
   for (const [regex, label] of banned) {
     if (regex.test(patch)) {

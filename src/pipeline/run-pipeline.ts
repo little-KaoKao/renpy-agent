@@ -26,6 +26,7 @@ import {
 } from './workspace.js';
 import { runAudioUiStage, type AudioUiStageStats } from './audio-ui.js';
 import { runCutsceneStage, type CutsceneStageStats } from './cutscene-stage.js';
+import { runVisualStage, type VisualStageStats } from './visual-stage.js';
 
 export interface PipelineLogger {
   info(message: string): void;
@@ -57,6 +58,15 @@ export interface RunPipelineParams {
    * placeholder for shots without a ready cutscene.
    */
   readonly enableCutscene?: boolean;
+  /**
+   * v0.6+: when true, run the visual asset stage between Storyboarder and
+   * audio-ui. Produces character main images (MJv7) + scene backgrounds
+   * (Nanobanana2) and registers them in the AssetRegistry so Coder emits real
+   * `image` statements instead of `Solid` placeholders. Requires
+   * `runningHubClient`. Single asset failures degrade to Stage-A Solid, don't
+   * collapse the pipeline.
+   */
+  readonly enableVisual?: boolean;
   readonly runningHubClient?: RunningHubClient;
   /**
    * When true, reuse whichever stage snapshots already exist under
@@ -117,6 +127,26 @@ export async function runPipeline(params: RunPipelineParams): Promise<PipelineRe
     log.info(`[storyboarder] produced ${storyboarder.shots.length} shots (snapshot saved)`);
   }
 
+  let visualStats: VisualStageStats | undefined;
+  if (params.enableVisual) {
+    if (!params.runningHubClient) {
+      throw new Error(
+        'runPipeline: enableVisual=true requires runningHubClient. ' +
+          'Pass an HttpRunningHubClient (or mock) via RunPipelineParams.runningHubClient.',
+      );
+    }
+    log.info('[visual] generating character main images + scene backgrounds...');
+    const registryPath = registryPathForGame(gameDir);
+    const stage = await runVisualStage({
+      planner,
+      gameDir,
+      registryPath,
+      runningHubClient: params.runningHubClient,
+      logger: log,
+    });
+    visualStats = stage.stats;
+  }
+
   let audioUiStats: AudioUiStageStats | undefined;
   let uiPatches: ReadonlyArray<{ readonly screen: string; readonly patch: string }> = [];
   if (params.enableAudioUi) {
@@ -168,10 +198,12 @@ export async function runPipeline(params: RunPipelineParams): Promise<PipelineRe
   }
 
   log.info(`[coder] generating .rpy into ${gameDir}...`);
-  // Reload the registry so Coder sees audio / cutscene assets the stages just produced.
-  const assetRegistry = params.enableAudioUi || params.enableCutscene
-    ? await loadRegistry(registryPathForGame(gameDir))
-    : undefined;
+  // Reload the registry so Coder sees visual / audio / cutscene assets any
+  // stage just produced.
+  const assetRegistry =
+    params.enableVisual || params.enableAudioUi || params.enableCutscene
+      ? await loadRegistry(registryPathForGame(gameDir))
+      : undefined;
   await writeGameProject({
     planner,
     storyboarder,
@@ -197,6 +229,7 @@ export async function runPipeline(params: RunPipelineParams): Promise<PipelineRe
     writer,
     storyboarder,
     testRun,
+    ...(visualStats !== undefined ? { visual: visualStats } : {}),
     ...(audioUiStats !== undefined ? { audioUi: audioUiStats } : {}),
     ...(cutsceneStats !== undefined ? { cutscene: cutsceneStats } : {}),
   };
