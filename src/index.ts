@@ -34,27 +34,6 @@ export type {
 } from './schema/galgame-workspace.js';
 
 export type {
-  PocRole,
-  WorkflowContext,
-  ValidationResult,
-  TaskResult,
-  CommonTools,
-  ProducerTools,
-  WriterTools,
-  StoryboarderTools,
-  CharacterDesignerTools,
-  SceneDesignerTools,
-  MusicDirectorTools,
-  VoiceDirectorTools,
-  SfxDesignerTools,
-  UiDesignerTools,
-  CoderTools,
-  QaTools,
-} from './workflows/galgame-workflows.js';
-
-export type { PlannerTools } from './planner/index.js';
-
-export type {
   RunningHubClient,
   RunningHubSubmitParams,
   RunningHubTaskResult,
@@ -136,13 +115,22 @@ export type {
 export {
   generateCutsceneVideo,
   buildCutscenePrompt,
-  logicalKeyForCutsceneShot,
 } from './executers/storyboarder/generate-cutscene.js';
 export type {
   CutsceneKind,
   GenerateCutsceneVideoParams,
   GenerateCutsceneVideoResult,
 } from './executers/storyboarder/generate-cutscene.js';
+
+export {
+  logicalKeyForCharacter,
+  logicalKeyForScene,
+  logicalKeyForBgm,
+  logicalKeyForVoiceLine,
+  logicalKeyForSfx,
+  logicalKeyForCutscene,
+} from './assets/logical-key.js';
+export type { SfxCue } from './assets/logical-key.js';
 
 // --- v0.2 minimal pipeline ---
 
@@ -182,9 +170,6 @@ export {
   generateGameProject,
   writeGameProject,
   renderScriptRpy,
-  logicalKeyForCharacter,
-  logicalKeyForScene,
-  logicalKeyForCutscene,
 } from './pipeline/coder.js';
 export { runQa, parseLintOutput } from './pipeline/qa.js';
 export { runPipeline, slugifyStoryName } from './pipeline/run-pipeline.js';

@@ -19,8 +19,9 @@ import { inferExtensionFromUrl } from '../../assets/download.js';
 import type { FetchLike } from '../../assets/download.js';
 import { swapAssetPlaceholder, markAssetError } from '../../assets/swap.js';
 import type { AssetRegistryEntry } from '../../assets/registry.js';
+import { logicalKeyForSfx, type SfxCue } from '../../assets/logical-key.js';
 
-export type SfxCue = 'enter' | 'action' | 'exit' | 'ambient';
+export type { SfxCue };
 
 export interface GenerateSfxParams {
   readonly shotNumber: number;
@@ -45,10 +46,6 @@ export interface GenerateSfxResult {
 const DEFAULT_SFX_TIMEOUT_MS = 3 * 60 * 1000;
 const DEFAULT_VOICE_HINT =
   'ambient sound field, no voice, pure environmental audio';
-
-export function logicalKeyForSfx(shotNumber: number, cue: SfxCue): string {
-  return `sfx:shot_${shotNumber}:${cue}`;
-}
 
 export async function generateSfx(
   params: GenerateSfxParams,

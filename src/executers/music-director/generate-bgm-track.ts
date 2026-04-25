@@ -21,6 +21,7 @@ import { inferExtensionFromUrl, slugForFilename } from '../../assets/download.js
 import type { FetchLike } from '../../assets/download.js';
 import { swapAssetPlaceholder, markAssetError } from '../../assets/swap.js';
 import type { AssetRegistryEntry } from '../../assets/registry.js';
+import { logicalKeyForBgm } from '../../assets/logical-key.js';
 
 export interface GenerateBgmTrackParams {
   readonly trackName: string;
@@ -42,10 +43,6 @@ export interface GenerateBgmTrackResult {
 }
 
 const DEFAULT_BGM_TIMEOUT_MS = 10 * 60 * 1000;
-
-export function logicalKeyForBgm(trackName: string): string {
-  return `bgm:${slugForFilename(trackName)}`;
-}
 
 export async function generateBgmTrack(
   params: GenerateBgmTrackParams,

@@ -13,6 +13,7 @@ import { inferExtensionFromUrl, slugForFilename } from '../../assets/download.js
 import type { FetchLike } from '../../assets/download.js';
 import { swapAssetPlaceholder, markAssetError } from '../../assets/swap.js';
 import type { AssetRegistryEntry } from '../../assets/registry.js';
+import { logicalKeyForScene } from '../../assets/logical-key.js';
 
 export interface GenerateSceneBackgroundParams {
   readonly sceneName: string;
@@ -48,7 +49,7 @@ export function buildSceneBackgroundPrompt(
 export async function generateSceneBackground(
   params: GenerateSceneBackgroundParams,
 ): Promise<GenerateSceneBackgroundResult> {
-  const logicalKey = `scene:${slugForFilename(params.sceneName)}:bg`;
+  const logicalKey = logicalKeyForScene(params.sceneName);
   const prompt = buildSceneBackgroundPrompt(
     params.description,
     params.timeOfDay,

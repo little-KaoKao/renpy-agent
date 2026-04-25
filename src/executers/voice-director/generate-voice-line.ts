@@ -15,6 +15,7 @@ import { inferExtensionFromUrl } from '../../assets/download.js';
 import type { FetchLike } from '../../assets/download.js';
 import { swapAssetPlaceholder, markAssetError } from '../../assets/swap.js';
 import type { AssetRegistryEntry } from '../../assets/registry.js';
+import { logicalKeyForVoiceLine } from '../../assets/logical-key.js';
 
 export interface GenerateVoiceLineParams {
   readonly sceneNumber: number;
@@ -37,10 +38,6 @@ export interface GenerateVoiceLineResult {
 }
 
 const DEFAULT_VOICE_TIMEOUT_MS = 3 * 60 * 1000;
-
-export function logicalKeyForVoiceLine(sceneNumber: number, lineIndex: number): string {
-  return `voice:scene_${sceneNumber}:line_${lineIndex}`;
-}
 
 export async function generateVoiceLine(
   params: GenerateVoiceLineParams,

@@ -1,4 +1,3 @@
-export type { UiDesignerTools } from '../../workflows/galgame-workflows.js';
 export {
   generateUiPatch,
   validateUiPatch,

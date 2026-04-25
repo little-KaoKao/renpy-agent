@@ -21,7 +21,7 @@ import {
   type AssetRegistryEntry,
   type AssetRegistryFile,
 } from '../assets/registry.js';
-import { logicalKeyForCharacter } from './coder.js';
+import { logicalKeyForCharacter } from '../assets/logical-key.js';
 import type {
   PlannerOutput,
   PlannerOutputCharacter,

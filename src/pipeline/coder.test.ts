@@ -3,14 +3,16 @@ import {
   assignCharacterIdentifiers,
   assignSceneIdentifiers,
   generateGameProject,
+  renderScriptRpy,
+} from './coder.js';
+import {
   logicalKeyForBgm,
   logicalKeyForCharacter,
   logicalKeyForCutscene,
   logicalKeyForScene,
   logicalKeyForSfx,
   logicalKeyForVoiceLine,
-  renderScriptRpy,
-} from './coder.js';
+} from '../assets/logical-key.js';
 import type { PlannerOutput, StoryboarderOutput } from './types.js';
 import type { AssetRegistryFile } from '../assets/registry.js';
 

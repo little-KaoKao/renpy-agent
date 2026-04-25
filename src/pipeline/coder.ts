@@ -4,6 +4,14 @@ import { dirname, resolve } from 'node:path';
 import type { PlannerOutput, StoryboarderOutput } from './types.js';
 import type { AssetRegistryFile, AssetType } from '../assets/registry.js';
 import { findByLogicalKey } from '../assets/registry.js';
+import {
+  logicalKeyForBgm,
+  logicalKeyForCharacter,
+  logicalKeyForCutscene,
+  logicalKeyForScene,
+  logicalKeyForSfx,
+  logicalKeyForVoiceLine,
+} from '../assets/logical-key.js';
 import { mergeUiPatches, type UiPatch } from './ui-merge.js';
 
 const SCENE_PALETTE = [
@@ -458,37 +466,11 @@ function slugToIdent(value: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// AssetRegistry lookups (Stage B ↔ Stage A binding)
+// AssetRegistry lookup (Stage B ↔ Stage A binding)
 // ---------------------------------------------------------------------------
-
-export function logicalKeyForCharacter(name: string): string {
-  return `character:${slugToIdent(name) || 'ch'}:main`;
-}
-
-export function logicalKeyForScene(name: string): string {
-  return `scene:${slugToIdent(name) || 'scene'}:bg`;
-}
-
-export function logicalKeyForCutscene(shotNumber: number): string {
-  return `cutscene:shot_${shotNumber}`;
-}
-
-// Mirrors the conventions from the audio/ui executers so Coder and executers
-// share one source of truth on how registry entries are keyed.
-export function logicalKeyForBgm(sceneName: string): string {
-  return `bgm:${slugToIdent(sceneName) || 'bgm'}`;
-}
-
-export function logicalKeyForVoiceLine(sceneNumber: number, lineIndex: number): string {
-  return `voice:scene_${sceneNumber}:line_${lineIndex}`;
-}
-
-export function logicalKeyForSfx(
-  shotNumber: number,
-  cue: 'enter' | 'action' | 'exit' | 'ambient',
-): string {
-  return `sfx:shot_${shotNumber}:${cue}`;
-}
+// logicalKeyFor* helpers live in ../assets/logical-key.ts — shared by Coder
+// and executers so that the key read here matches the key written by each
+// generator.
 
 function lookupRealAsset(
   registry: AssetRegistryFile | undefined,

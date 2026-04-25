@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildCutscenePrompt,
   generateCutsceneVideo,
-  logicalKeyForCutsceneShot,
 } from './generate-cutscene.js';
+import { logicalKeyForCutscene } from '../../assets/logical-key.js';
 import type { RunningHubClient } from '../common/runninghub-client.js';
 import { loadRegistry, registryPathForGame } from '../../assets/registry.js';
 import type { FetchLike } from '../../assets/download.js';
@@ -31,9 +31,9 @@ describe('buildCutscenePrompt', () => {
   });
 });
 
-describe('logicalKeyForCutsceneShot', () => {
+describe('logicalKeyForCutscene', () => {
   it('includes the shot number for stable Stage A ↔ B binding', () => {
-    expect(logicalKeyForCutsceneShot(3)).toBe('cutscene:shot_3');
+    expect(logicalKeyForCutscene(3)).toBe('cutscene:shot_3');
   });
 });
 

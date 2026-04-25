@@ -19,6 +19,7 @@ import { inferExtensionFromUrl, slugForFilename } from '../../assets/download.js
 import type { FetchLike } from '../../assets/download.js';
 import { swapAssetPlaceholder, markAssetError } from '../../assets/swap.js';
 import type { AssetRegistryEntry } from '../../assets/registry.js';
+import { logicalKeyForCharacter } from '../../assets/logical-key.js';
 
 export interface GenerateCharacterMainImageParams {
   readonly characterName: string;
@@ -51,7 +52,7 @@ export function buildCharacterMainPrompt(
 export async function generateCharacterMainImage(
   params: GenerateCharacterMainImageParams,
 ): Promise<GenerateCharacterMainImageResult> {
-  const logicalKey = `character:${slugForFilename(params.characterName)}:main`;
+  const logicalKey = logicalKeyForCharacter(params.characterName);
   const prompt = buildCharacterMainPrompt(params.visualDescription, params.styleHint);
   const inputs: AiAppNodeInput[] = [{ role: 'prompt', value: prompt }];
 

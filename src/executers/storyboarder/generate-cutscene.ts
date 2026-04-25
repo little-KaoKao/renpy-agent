@@ -26,6 +26,7 @@ import { inferExtensionFromUrl } from '../../assets/download.js';
 import type { FetchLike } from '../../assets/download.js';
 import { swapAssetPlaceholder, markAssetError } from '../../assets/swap.js';
 import type { AssetRegistryEntry } from '../../assets/registry.js';
+import { logicalKeyForCutscene } from '../../assets/logical-key.js';
 
 export type CutsceneKind = 'transition' | 'reference';
 
@@ -71,14 +72,10 @@ export function buildCutscenePrompt(
   return `${motionPrompt.trim()}. ${style}.`;
 }
 
-export function logicalKeyForCutsceneShot(shotNumber: number): string {
-  return `cutscene:shot_${shotNumber}`;
-}
-
 export async function generateCutsceneVideo(
   params: GenerateCutsceneVideoParams,
 ): Promise<GenerateCutsceneVideoResult> {
-  const logicalKey = logicalKeyForCutsceneShot(params.shotNumber);
+  const logicalKey = logicalKeyForCutscene(params.shotNumber);
   const prompt = buildCutscenePrompt(params.kind, params.motionPrompt, params.styleHint);
 
   if (params.kind === 'reference' && !params.referenceImageUri) {

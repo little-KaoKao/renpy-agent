@@ -64,25 +64,22 @@
 │
 ├── src/                        # 所有 TS 源码(编译后落在 dist/,不入 git)
 │   ├── index.ts                # barrel,re-export 全部公开类型
-│   ├── cli.ts                  # `renpy-agent` CLI 入口(v0.2 起)
+│   ├── cli.ts                  # `renpy-agent` CLI 入口
 │   ├── schema/
-│   │   └── galgame-workspace.ts    # 15 文档 TS schema
-│   ├── workflows/
-│   │   └── galgame-workflows.ts    # 7 POC 的 tool-set 类型契约
-│   ├── planner/
-│   │   └── index.ts                # PlannerTools 类型契约
-│   ├── llm/                    # LlmClient 抽象 + ClaudeLlmClient(v0.2)
-│   ├── pipeline/               # 单次 POC 串行编排(v0.2):planner/writer/storyboarder/coder/qa/run-pipeline
-│   ├── templates/              # 静态 .rpy 模板(gui/screens/options,构建时拷贝到 dist/)
-│   └── executers/              # V5 Executer 实现(尚未接线,v0.3+ 用)
-│       ├── common/                 # runninghub-client 等跨 POC 共享模块
-│       ├── producer/
-│       ├── writer/
-│       ├── storyboarder/
-│       ├── character-designer/
-│       ├── scene-designer/
-│       ├── coder/
-│       └── qa/
+│   │   └── galgame-workspace.ts    # 15 文档 TS schema(Planner system prompt)
+│   ├── assets/                 # AssetRegistry / download / swap / logical-key(共享底座)
+│   ├── llm/                    # LlmClient 抽象 + ClaudeLlmClient(direct / Bedrock)
+│   ├── pipeline/               # 串行编排:planner / writer / storyboarder / audio-ui / coder / qa / modify / workspace
+│   ├── templates/              # 静态 .rpy + gui/ + 字体(构建时拷贝到 dist/,Coder 注入 game/)
+│   └── executers/
+│       ├── common/                 # runninghub-client + runninghub-schemas + run-image-task
+│       ├── character-designer/     # MJ v7 立绘
+│       ├── scene-designer/         # Nanobanana2 背景
+│       ├── storyboarder/           # Seedance2.0 视频
+│       ├── music-director/         # SunoV5 BGM(v0.5+)
+│       ├── voice-director/         # Qwen3 TTS 配音(v0.5+)
+│       ├── sfx-designer/           # Qwen3 TTS 复用(v0.5+,TODO: 换 TTA)
+│       └── ui-designer/            # LLM 生成 screens.rpy 补丁(v0.5+)
 ├── resources/
 │   └── renpy-storyboard/       # 分镜师 skill 的正式家
 └── docs/
@@ -430,6 +427,8 @@ async function plan() {
 - [X] [scripts/copy-templates.mjs](scripts/copy-templates.mjs) 改为递归镜像,支持子目录(`gui/bar/` `gui/button/` 等),build 产物 84 文件
 - [X] `config.window_icon` 在 [src/templates/options.rpy](src/templates/options.rpy) 中默认注释(启动不阻塞;有真图标再启用)
 - [X] 启动验证:`renpy-sdk/renpy.exe runtime/games/smoke-audio-ui` 在 NVIDIA GL2 渲染器上稳定运行 20s+,无 traceback;3 条真 FLAC BGM 被 `play music` 引用,main_menu UI patch merge 到 screens.rpy
+- [X] logicalKey slug 统一:所有 `logicalKeyFor*` helper 集中到 [src/assets/logical-key.ts](src/assets/logical-key.ts),Coder 和 executers 共用 `slugForFilename`。之前 Coder 用 `slugToIdent`(fallback `'ch'`/`'scene'`/`'bgm'`),executers 用 `slugForFilename`(fallback `'asset'`),非 ASCII 角色/场景名(如 `"白樱"`)会让 Stage B 写入的 key 对不上 Coder 查询的 key,真资产默默走占位 —— 现在根治
+- [X] 清理 v0.1 scaffold 死代码:删除 [src/workflows/](src/workflows/)、[src/planner/](src/planner/)、[src/executers/common/types.ts](src/executers/common/types.ts) 以及 7 个空骨架 `index.ts`(producer/writer/coder/qa/character-designer/scene-designer/storyboarder 只 re-export 类型,无 runtime 引用);[src/index.ts](src/index.ts) barrel 同步收敛,移除重复的 `logicalKeyForCutsceneShot`(保留唯一 `logicalKeyForCutscene`)
 
 ### v1.0
 

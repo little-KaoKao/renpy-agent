@@ -2,10 +2,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  generateBgmTrack,
-  logicalKeyForBgm,
-} from './generate-bgm-track.js';
+import { generateBgmTrack } from './generate-bgm-track.js';
+import { logicalKeyForBgm } from '../../assets/logical-key.js';
 import type { RunningHubClient } from '../common/runninghub-client.js';
 import { loadRegistry, registryPathForGame } from '../../assets/registry.js';
 import type { FetchLike } from '../../assets/download.js';
