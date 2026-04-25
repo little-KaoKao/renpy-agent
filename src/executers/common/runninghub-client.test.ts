@@ -75,7 +75,7 @@ describe('HttpRunningHubClient.submitTask', () => {
   it('posts to /openapi/v2/run/ai-app/{webappId} with Bearer auth and body without apiKey', async () => {
     const { fetchFn, calls } = makeFetch({
       '/openapi/v2/run/ai-app/': () => ({
-        json: { code: 0, data: { taskId: 'task-xyz' } },
+        json: { taskId: 'task-xyz', status: 'RUNNING', errorCode: '', errorMessage: '' },
       }),
     });
     const client = new HttpRunningHubClient({
@@ -104,7 +104,7 @@ describe('HttpRunningHubClient.submitTask', () => {
   it('fills in schema defaults for fields the caller does not provide', async () => {
     const { fetchFn, calls } = makeFetch({
       '/openapi/v2/run/ai-app/': () => ({
-        json: { code: 0, data: { taskId: 't1' } },
+        json: { taskId: 't1', status: 'RUNNING', errorCode: '', errorMessage: '' },
       }),
     });
     const client = new HttpRunningHubClient({
@@ -133,7 +133,7 @@ describe('HttpRunningHubClient.submitTask', () => {
   it('emits fieldData when the schema declares an enum whitelist', async () => {
     const { fetchFn, calls } = makeFetch({
       '/openapi/v2/run/ai-app/': () => ({
-        json: { code: 0, data: { taskId: 't2' } },
+        json: { taskId: 't2', status: 'RUNNING', errorCode: '', errorMessage: '' },
       }),
     });
     const client = new HttpRunningHubClient({
@@ -159,7 +159,7 @@ describe('HttpRunningHubClient.submitTask', () => {
   it('passes through instanceType and usePersonalQueue', async () => {
     const { fetchFn, calls } = makeFetch({
       '/openapi/v2/run/ai-app/': () => ({
-        json: { code: 0, data: { taskId: 't3' } },
+        json: { taskId: 't3', status: 'RUNNING', errorCode: '', errorMessage: '' },
       }),
     });
     const client = new HttpRunningHubClient({
@@ -227,10 +227,32 @@ describe('HttpRunningHubClient.submitTask', () => {
     ).rejects.toThrow(/no schema field for role="reference_image_1"/);
   });
 
-  it('throws RunningHubError on non-zero response code', async () => {
+  it('throws RunningHubError when v2 response has a non-empty errorCode', async () => {
     const { fetchFn } = makeFetch({
       '/openapi/v2/run/ai-app/': () => ({
-        json: { code: 1, msg: 'webapp not exists' },
+        json: {
+          taskId: '',
+          status: '',
+          errorCode: 'WEBAPP_NOT_EXISTS',
+          errorMessage: 'webapp not exists',
+        },
+      }),
+    });
+    const client = new HttpRunningHubClient({
+      apiKey: FAKE_KEY,
+      appSchemas: TEST_SCHEMAS,
+      fetchFn,
+    });
+
+    await expect(
+      client.submitTask({ appKey: 'TEXT_TO_IMAGE', inputs: [{ role: 'prompt', value: 'x' }] }),
+    ).rejects.toThrow(/webapp not exists/);
+  });
+
+  it('throws RunningHubError when v2 response has no taskId even if errorCode is empty', async () => {
+    const { fetchFn } = makeFetch({
+      '/openapi/v2/run/ai-app/': () => ({
+        json: { taskId: '', status: '', errorCode: '', errorMessage: '' },
       }),
     });
     const client = new HttpRunningHubClient({

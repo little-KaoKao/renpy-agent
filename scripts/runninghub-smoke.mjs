@@ -6,12 +6,14 @@
 // 用法(fnm 的 Node 已在 PATH):
 //   node --env-file=.env scripts/runninghub-smoke.mjs
 //
-// 响应语义:
-//   code=0   + data.taskId 存在        → 握手 OK
-//   code=1   + "webapp not exists"     → apiKey 通过,webappId 找不到(去控制台核对)
-//   code=301 + "user not exist"        → apiKey 无效
-//   HTTP 401 / 403                     → Authorization header 格式或权限问题
-//   网络错误 / DNS 错                   → 国内网络问题
+// 响应语义(v2 submit):
+//   { taskId, status: "RUNNING", errorCode: "", errorMessage: "", ... }  → 握手 OK
+//   { errorCode: "APIKEY_INVALID", errorMessage: "..." }                 → apiKey 无效
+//   { errorCode: "WEBAPP_NOT_EXISTS", ... }                              → webappId 找不到
+//   HTTP 401 / 403                                                       → Authorization header 格式或权限问题
+//   网络错误 / DNS 错                                                     → 国内网络问题
+//
+// /task/openapi/status(第二步)还是 v1 envelope:{ code: 0, data: "RUNNING"|{...} }。
 //
 // 协议变更(v0.5+,参考 src/executers/common/runninghub-client.ts):
 //   POST /openapi/v2/run/ai-app/{webappId}
@@ -69,12 +71,15 @@ const submit = await postJson(
 console.log('HTTP', submit.httpStatus);
 console.log(JSON.stringify(submit.json ?? submit.raw, null, 2));
 
-const taskId = submit.json?.data?.taskId;
-if (!taskId) {
-  console.log('\n⚠️  未拿到 taskId — 握手失败。根据上面的 msg 判断:');
-  console.log('    code=1 webapp not exists  → webappId 错,去控制台核对');
-  console.log('    code=301 user not exist   → apiKey 无效');
-  console.log('    HTTP 401/403              → Authorization header 格式错或权限问题');
+// v2 提交响应:taskId 直接在顶层,没有 code/data 包装。
+// errorCode 是空串表示成功,有值表示失败(例如 "APIKEY_INVALID")。
+const taskId = submit.json?.taskId;
+const errorCode = submit.json?.errorCode;
+if (!taskId || errorCode) {
+  console.log('\n⚠️  未拿到 taskId — 握手失败。根据上面的 errorCode/errorMessage 判断:');
+  console.log('    WEBAPP_NOT_EXISTS    → webappId 错,去控制台核对');
+  console.log('    APIKEY_INVALID       → apiKey 无效');
+  console.log('    HTTP 401/403         → Authorization header 格式错或权限问题');
   process.exit(0);
 }
 
