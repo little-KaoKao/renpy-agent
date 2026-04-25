@@ -3,9 +3,12 @@ import {
   assignCharacterIdentifiers,
   assignSceneIdentifiers,
   generateGameProject,
+  logicalKeyForBgm,
   logicalKeyForCharacter,
   logicalKeyForCutscene,
   logicalKeyForScene,
+  logicalKeyForSfx,
+  logicalKeyForVoiceLine,
   renderScriptRpy,
 } from './coder.js';
 import type { PlannerOutput, StoryboarderOutput } from './types.js';
@@ -285,5 +288,110 @@ describe('renderScriptRpy with AssetRegistry (Stage B binding)', () => {
     };
     const script = renderScriptRpy(PLANNER_FIXTURE, STORYBOARDER_FIXTURE, registry);
     expect(script).not.toContain('images/char/wip.png');
+  });
+});
+
+describe('renderScriptRpy audio + UI insertion (v0.5)', () => {
+  it('inserts `play music` after scene header when bgm is ready', () => {
+    const registry: AssetRegistryFile = {
+      version: 1,
+      entries: [
+        {
+          placeholderId: 'bgm:sakura_night',
+          logicalKey: logicalKeyForBgm('sakura_night'),
+          assetType: 'bgm_track',
+          realAssetLocalPath: 'audio/bgm/sakura_night.mp3',
+          remoteAssetUri: 'https://cdn/bgm.mp3',
+          status: 'ready',
+          updatedAt: '2026-04-25T00:00:00.000Z',
+        },
+      ],
+    };
+    const script = renderScriptRpy(PLANNER_FIXTURE, STORYBOARDER_FIXTURE, registry);
+    expect(script).toContain('play music "audio/bgm/sakura_night.mp3" fadeout 1.0');
+    // When classroom bgm missing, no play music line for that scene.
+    const playMusicCount = (script.match(/play music /g) ?? []).length;
+    expect(playMusicCount).toBe(1);
+  });
+
+  it('does not insert `play music` when no bgm registered', () => {
+    const script = renderScriptRpy(PLANNER_FIXTURE, STORYBOARDER_FIXTURE);
+    expect(script).not.toContain('play music');
+  });
+
+  it('inserts `voice` before a dialogue line when voice_line is ready', () => {
+    // First scene is sakura_night (sceneNumber=1), first dialogue line is index 0.
+    const registry: AssetRegistryFile = {
+      version: 1,
+      entries: [
+        {
+          placeholderId: 'voice:scene_1:line_0',
+          logicalKey: logicalKeyForVoiceLine(1, 0),
+          assetType: 'voice_line',
+          realAssetLocalPath: 'audio/voice/scene_1/line_0.mp3',
+          remoteAssetUri: 'https://cdn/v.mp3',
+          status: 'ready',
+          updatedAt: '2026-04-25T00:00:00.000Z',
+        },
+      ],
+    };
+    const script = renderScriptRpy(PLANNER_FIXTURE, STORYBOARDER_FIXTURE, registry);
+    expect(script).toContain('voice "audio/voice/scene_1/line_0.mp3"');
+    // voice line sits directly before its say — find its index and confirm the
+    // next non-blank line is a say statement.
+    const lines = script.split('\n');
+    const voiceIdx = lines.findIndex((l) => l.includes('voice "audio/voice/scene_1/line_0.mp3"'));
+    expect(voiceIdx).toBeGreaterThan(-1);
+    expect(lines[voiceIdx + 1]).toMatch(/"你又来了。"/);
+  });
+
+  it('inserts `play sound` at shot entry when sfx enter cue is ready', () => {
+    const registry: AssetRegistryFile = {
+      version: 1,
+      entries: [
+        {
+          placeholderId: 'sfx:shot_1:enter',
+          logicalKey: logicalKeyForSfx(1, 'enter'),
+          assetType: 'sfx',
+          realAssetLocalPath: 'audio/sfx/shot_1_enter.mp3',
+          remoteAssetUri: 'https://cdn/s.mp3',
+          status: 'ready',
+          updatedAt: '2026-04-25T00:00:00.000Z',
+        },
+      ],
+    };
+    const script = renderScriptRpy(PLANNER_FIXTURE, STORYBOARDER_FIXTURE, registry);
+    expect(script).toContain('play sound "audio/sfx/shot_1_enter.mp3"');
+  });
+});
+
+describe('generateGameProject with UI patches', () => {
+  it('appends UI patches to screens.rpy with marker comments', async () => {
+    const files = await generateGameProject({
+      planner: PLANNER_FIXTURE,
+      storyboarder: STORYBOARDER_FIXTURE,
+      uiPatches: [
+        {
+          screen: 'main_menu',
+          patch: '# --- ui-patch: main_menu (mood: pastel) ---\nscreen main_menu():\n    pass',
+        },
+      ],
+    });
+    expect(files.screensRpy).toContain('# === renpy-agent UI patch: main_menu ===');
+    expect(files.screensRpy).toContain('screen main_menu():');
+  });
+
+  it('leaves screens.rpy untouched when no UI patches are provided', async () => {
+    const withNone = await generateGameProject({
+      planner: PLANNER_FIXTURE,
+      storyboarder: STORYBOARDER_FIXTURE,
+    });
+    const withEmpty = await generateGameProject({
+      planner: PLANNER_FIXTURE,
+      storyboarder: STORYBOARDER_FIXTURE,
+      uiPatches: [],
+    });
+    expect(withNone.screensRpy).toBe(withEmpty.screensRpy);
+    expect(withNone.screensRpy).not.toContain('renpy-agent UI patch');
   });
 });
