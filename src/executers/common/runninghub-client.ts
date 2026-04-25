@@ -119,8 +119,17 @@ interface RhEnvelope<T> {
   readonly data?: T;
 }
 
-interface RhSubmitData {
+/**
+ * `/openapi/v2/run/ai-app/{webappId}` 的响应 —— 不带 code/data 包装,taskId 直接在顶层。
+ * 成功:`errorCode === ''` 且 `taskId` 非空。
+ * 失败:`errorCode` 非空(例如 "APIKEY_INVALID_NODE_INFO")+ `errorMessage` 文本。
+ */
+interface RhV2SubmitResponse {
   readonly taskId?: string;
+  readonly status?: string;
+  readonly errorCode?: string;
+  readonly errorMessage?: string;
+  readonly clientId?: string;
 }
 
 interface RhStatusData {
@@ -174,7 +183,7 @@ export class HttpRunningHubClient implements RunningHubClient {
 
     const nodeInfoList = this.buildNodeInfoList(params.appKey, schema, params.inputs);
 
-    const envelope = await this.postJson<RhEnvelope<RhSubmitData>>(
+    const response = await this.postJson<RhV2SubmitResponse>(
       `/openapi/v2/run/ai-app/${encodeURIComponent(schema.webappId)}`,
       {
         nodeInfoList,
@@ -183,14 +192,15 @@ export class HttpRunningHubClient implements RunningHubClient {
       },
       { Authorization: `Bearer ${this.apiKey}` },
     );
-    if (envelope.code !== 0 || !envelope.data?.taskId) {
+    // v2 协议:errorCode=""(空串)+ taskId 非空 = 成功;任一不满足都算失败。
+    if (response.errorCode || !response.taskId) {
       throw new RunningHubError(
-        `submit failed: ${envelope.msg ?? 'unknown error'}`,
-        envelope.code,
-        envelope,
+        `submit failed: ${response.errorMessage || response.errorCode || 'unknown error'}`,
+        undefined,
+        response,
       );
     }
-    return { taskId: envelope.data.taskId };
+    return { taskId: response.taskId };
   }
 
   async pollTask(taskId: string): Promise<RunningHubTaskResult> {
