@@ -7,6 +7,7 @@
 // triplet is a separate feature deferred to v0.7.
 
 import { readFile } from 'node:fs/promises';
+import type { LlmClient } from '../llm/types.js';
 import {
   appendPlannerMemory,
   type PlannerMemoryEntry,
@@ -47,6 +48,8 @@ export interface CommonToolContext {
   readonly memoryDir: string;
   readonly taskAgents: TaskAgentRegistry;
   readonly logger: CommonToolLogger;
+  /** Optional: tools that do LLM calls (writer, storyboarder) inject this. */
+  readonly llm?: LlmClient;
 }
 
 // ── Planner side ────────────────────────────────────────────────────
