@@ -141,7 +141,18 @@ interface RhStatusData {
 
 interface RhOutputItem {
   readonly fileUrl?: string;
+  readonly fileType?: string;
   readonly url?: string;
+}
+
+/**
+ * `/task/openapi/outputs` 在 code=805 时的结构化失败信息(官方集成文档 doc-8287340 定义)。
+ * 我们尽量把这些字段透传出去,方便上层日志打到 workspace 日志里。
+ */
+interface RhFailedReason {
+  readonly node_name?: string;
+  readonly exception_message?: string;
+  readonly traceback?: string;
 }
 
 interface NodeInfo {
@@ -204,9 +215,15 @@ export class HttpRunningHubClient implements RunningHubClient {
   }
 
   async pollTask(taskId: string): Promise<RunningHubTaskResult> {
-    // 注:/task/openapi/status 和 /task/openapi/outputs 目前保持旧路径(body.apiKey)。
-    // 如果 RunningHub 把这两个端点也迁到 v2 了,按官方错误码再调整。
-    // 参考:https://www.runninghub.cn/runninghub-api-doc-cn/doc-8435517.md
+    // /task/openapi/status 和 /task/openapi/outputs 是 v1 端点,RunningHub 官方集成
+    // 文档(doc-8287340.md,2026-04-25 核对)仍只有这两个路径,没有 v2 版本 ——
+    // 用 body.apiKey 鉴权,envelope 为 { code, msg, data }。v2 迁移前保持不变。
+    //
+    // outputs 端点的数字 code 语义(doc-8287340):
+    //   0   → 成功,data 是 [{fileUrl, fileType}]
+    //   804 → 任务运行中(理论上 status 已拦截,兜底)
+    //   805 → 任务失败,data.failedReason = {node_name, exception_message, traceback}
+    //   813 → 任务排队中(同上,兜底)
     const statusEnv = await this.postJson<RhEnvelope<RhStatusData | string>>(
       '/task/openapi/status',
       { apiKey: this.apiKey, taskId },
@@ -232,17 +249,33 @@ export class HttpRunningHubClient implements RunningHubClient {
       return { status: mapped };
     }
 
-    const outputsEnv = await this.postJson<RhEnvelope<ReadonlyArray<RhOutputItem>>>(
+    // outputs 的 data 形状随 code 变化:成功 = ReadonlyArray<RhOutputItem>,
+    // 失败(code=805) = { failedReason: RhFailedReason }。用 unknown 收口,本地再窄化。
+    const outputsEnv = await this.postJson<RhEnvelope<unknown>>(
       '/task/openapi/outputs',
       { apiKey: this.apiKey, taskId },
     );
     if (outputsEnv.code !== 0) {
+      // code=805 → 结构化 failedReason。把 node 和异常消息拼进 errorMessage,
+      // 让上层日志一眼看到是哪个 node 炸的;原 envelope 也透出去便于 debug。
+      const failedReason = extractFailedReason(outputsEnv.data);
+      const reasonText = failedReason
+        ? `${failedReason.node_name ?? 'unknown node'}: ${failedReason.exception_message ?? ''}`.trim()
+        : '';
       return {
         status: 'error',
-        errorMessage: `outputs query failed: ${outputsEnv.msg ?? 'unknown error'} (code=${outputsEnv.code})`,
+        errorMessage:
+          reasonText ||
+          `outputs query failed: ${outputsEnv.msg ?? 'unknown error'} (code=${outputsEnv.code})`,
       };
     }
-    const first = outputsEnv.data?.[0];
+    if (!Array.isArray(outputsEnv.data)) {
+      return {
+        status: 'error',
+        errorMessage: 'outputs succeeded but data was not an array of files',
+      };
+    }
+    const first = outputsEnv.data[0] as RhOutputItem | undefined;
     const outputUri = first?.fileUrl ?? first?.url;
     if (!outputUri) {
       return {
@@ -348,6 +381,13 @@ function extractRawStatus(data: RhStatusData | string | undefined): string {
   if (typeof data === 'string') return data;
   if (!data) return '';
   return data.status ?? data.taskStatus ?? '';
+}
+
+function extractFailedReason(data: unknown): RhFailedReason | undefined {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+  const maybe = (data as { failedReason?: unknown }).failedReason;
+  if (!maybe || typeof maybe !== 'object') return undefined;
+  return maybe as RhFailedReason;
 }
 
 function mapStatus(raw: string): RunningHubTaskStatus {

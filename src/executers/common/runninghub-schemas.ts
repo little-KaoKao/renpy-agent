@@ -82,21 +82,46 @@ export const RUNNINGHUB_APP_IDENTITIES: Readonly<Record<RunningHubAppKey, Runnin
  *   - `role` 是客户端对 caller 暴露的语义 key,上层按 role 提供 inputs。
  *   - `defaultValue` 是 caller 不传时客户端自动填的值。
  *   - `optional: true` 表示 caller 不传也合法(例如 reference_image_2 / last_frame)。
- *   - `fieldData` 是下拉枚举的合法值 JSON 字符串(目前大部分留空 —— smoke test
- *     跑通后如果 RunningHub 报「fieldData is required」再把枚举 JSON 贴进来)。
+ *   - `fieldData` 是下拉枚举的合法值 JSON 字符串(2026-04-25 从控制台官方 curl
+ *     抄出来的原样字符串,两种格式:简短版 `[[...options], {"default":"..."}]`,
+ *     详细版 `[{"name":"","index":"","description":"","fastIndex":1.0}, ...]`)。
  *
  * 注意:同一 webappId 被多个 key 共用时,schema 条目**按 key 各存一份**(而不是按
  * webappId 去重),因为 Scene Background 和 Character Expression 的 inputs 期望不同
  * (Scene 不传 image node,Character 要传),schema 本身一样但调用语义分离。
  */
+// 下面这些 fieldData JSON 字符串是 RunningHub 控制台「API 调用」面板官方 curl
+// 里带的 fieldData 原样 —— 留在这里是为了在枚举字段 submit 时传回官方期望的格式,
+// 以及有个可机读的合法值参考。枚举格式有两种(RunningHub 控制台不统一):
+//   - 简短版: `[[options...], {"default": "..."}]`
+//   - 详细版: `[{"name":"","index":"","description":"","fastIndex":1.0}, ...]`
+const FD_MJV7_MODEL =
+  '[["Midjourney V7", "Midjourney V6.1", "Midjourney V6", "Midjourney V5.2", "Midjourney V5.1", "Niji V5", "Niji V6"], {"default": "Midjourney V7"}]';
+const FD_MJV7_ASPECT =
+  '[["auto", "1:1", "16:9", "16:10", "4:3", "3:2", "9:16", "10:16", "3:4", "2:3"], {"default": "auto"}]';
+const FD_NANO_ASPECT =
+  '[["auto", "1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"], {"default": "4:3"}]';
+const FD_NANO_RESOLUTION =
+  '[{"name":"1k","index":"1k","description":"","fastIndex":1.0},{"name":"2k","index":"2k","description":"","fastIndex":2.0},{"name":"4k","index":"4k","description":"","fastIndex":3.0}]';
+const FD_NANO_CHANNEL =
+  '[{"name":"Third-party","index":"Third-party","description":"第三方（低价渠道版）","fastIndex":1.0,"descriptionEn":"Third party (low-cost channel version)"},{"name":"Official","index":"Official","description":"官方（官方稳定版）","fastIndex":2.0,"descriptionEn":"Official (Official Stable Version)"}]';
+const FD_SEEDANCE_DURATION =
+  '[["4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"], {"default": "5"}]';
+const FD_SEEDANCE_RATIO =
+  '[["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"], {"default": "adaptive"}]';
+const FD_SEEDANCE_RESOLUTION =
+  '[["480p", "720p", "1080p", "2k", "4k"], {"default": "720p"}]';
+const FD_SUNO_VERSION =
+  '[["v3.0", "v3.5", "v4", "v4.5", "v4.5+", "v5"], {"default": "v4.5"}]';
+
 export const RUNNINGHUB_APP_SCHEMAS: Readonly<Record<RunningHubAppKey, AiAppSchema>> = {
   // §3.1 Midjourney v7 —— 4 个 node/field。nodeId=1.select 固定 "1"(切到"文本输入")。
   CHARACTER_MAIN_IMAGE: {
     webappId: RUNNINGHUB_APP_IDENTITIES.CHARACTER_MAIN_IMAGE.webappId,
     displayName: RUNNINGHUB_APP_IDENTITIES.CHARACTER_MAIN_IMAGE.displayName,
     fields: [
-      { nodeId: '4', fieldName: 'model_selected', role: 'model_select', defaultValue: 'Midjourney V7' },
-      { nodeId: '4', fieldName: 'aspect_rate', role: 'aspect', defaultValue: '3:4' },
+      { nodeId: '4', fieldName: 'model_selected', role: 'model_select', defaultValue: 'Midjourney V7', fieldData: FD_MJV7_MODEL },
+      { nodeId: '4', fieldName: 'aspect_rate', role: 'aspect', defaultValue: '3:4', fieldData: FD_MJV7_ASPECT },
       { nodeId: '1', fieldName: 'select', role: 'option', defaultValue: '1' },
       { nodeId: '6', fieldName: 'text', role: 'prompt' },
     ],
@@ -110,9 +135,9 @@ export const RUNNINGHUB_APP_SCHEMAS: Readonly<Record<RunningHubAppKey, AiAppSche
       { nodeId: '2', fieldName: 'image', role: 'reference_image_1' },
       { nodeId: '3', fieldName: 'image', role: 'reference_image_2', optional: true },
       { nodeId: '4', fieldName: 'image', role: 'reference_image_3', optional: true },
-      { nodeId: '1', fieldName: 'aspectRatio', role: 'aspect', defaultValue: '3:4' },
-      { nodeId: '1', fieldName: 'resolution', role: 'resolution', defaultValue: '2k' },
-      { nodeId: '1', fieldName: 'channel', role: 'option', defaultValue: 'Third-party' },
+      { nodeId: '1', fieldName: 'aspectRatio', role: 'aspect', defaultValue: '3:4', fieldData: FD_NANO_ASPECT },
+      { nodeId: '1', fieldName: 'resolution', role: 'resolution', defaultValue: '2k', fieldData: FD_NANO_RESOLUTION },
+      { nodeId: '1', fieldName: 'channel', role: 'option', defaultValue: 'Third-party', fieldData: FD_NANO_CHANNEL },
       { nodeId: '9', fieldName: 'text', role: 'prompt' },
     ],
   },
@@ -125,9 +150,9 @@ export const RUNNINGHUB_APP_SCHEMAS: Readonly<Record<RunningHubAppKey, AiAppSche
       { nodeId: '2', fieldName: 'image', role: 'reference_image_1', optional: true },
       { nodeId: '3', fieldName: 'image', role: 'reference_image_2', optional: true },
       { nodeId: '4', fieldName: 'image', role: 'reference_image_3', optional: true },
-      { nodeId: '1', fieldName: 'aspectRatio', role: 'aspect', defaultValue: '16:9' },
-      { nodeId: '1', fieldName: 'resolution', role: 'resolution', defaultValue: '2k' },
-      { nodeId: '1', fieldName: 'channel', role: 'option', defaultValue: 'Third-party' },
+      { nodeId: '1', fieldName: 'aspectRatio', role: 'aspect', defaultValue: '16:9', fieldData: FD_NANO_ASPECT },
+      { nodeId: '1', fieldName: 'resolution', role: 'resolution', defaultValue: '2k', fieldData: FD_NANO_RESOLUTION },
+      { nodeId: '1', fieldName: 'channel', role: 'option', defaultValue: 'Third-party', fieldData: FD_NANO_CHANNEL },
       { nodeId: '9', fieldName: 'text', role: 'prompt' },
     ],
   },
@@ -140,9 +165,9 @@ export const RUNNINGHUB_APP_SCHEMAS: Readonly<Record<RunningHubAppKey, AiAppSche
       { nodeId: '2', fieldName: 'image', role: 'first_frame' },
       { nodeId: '3', fieldName: 'image', role: 'last_frame', optional: true },
       { nodeId: '1', fieldName: 'real_person_mode', role: 'option', defaultValue: 'false' },
-      { nodeId: '1', fieldName: 'duration', role: 'duration', defaultValue: '5' },
-      { nodeId: '1', fieldName: 'ratio', role: 'ratio', defaultValue: '9:16' },
-      { nodeId: '1', fieldName: 'resolution', role: 'resolution', defaultValue: '720p' },
+      { nodeId: '1', fieldName: 'duration', role: 'duration', defaultValue: '5', fieldData: FD_SEEDANCE_DURATION },
+      { nodeId: '1', fieldName: 'ratio', role: 'ratio', defaultValue: '9:16', fieldData: FD_SEEDANCE_RATIO },
+      { nodeId: '1', fieldName: 'resolution', role: 'resolution', defaultValue: '720p', fieldData: FD_SEEDANCE_RESOLUTION },
       { nodeId: '1', fieldName: 'prompt', role: 'prompt' },
     ],
   },
@@ -155,14 +180,14 @@ export const RUNNINGHUB_APP_SCHEMAS: Readonly<Record<RunningHubAppKey, AiAppSche
       { nodeId: '2', fieldName: 'image', role: 'first_frame' },
       { nodeId: '3', fieldName: 'image', role: 'last_frame', optional: true },
       { nodeId: '1', fieldName: 'real_person_mode', role: 'option', defaultValue: 'false' },
-      { nodeId: '1', fieldName: 'duration', role: 'duration', defaultValue: '5' },
-      { nodeId: '1', fieldName: 'ratio', role: 'ratio', defaultValue: '16:9' },
-      { nodeId: '1', fieldName: 'resolution', role: 'resolution', defaultValue: '720p' },
+      { nodeId: '1', fieldName: 'duration', role: 'duration', defaultValue: '5', fieldData: FD_SEEDANCE_DURATION },
+      { nodeId: '1', fieldName: 'ratio', role: 'ratio', defaultValue: '16:9', fieldData: FD_SEEDANCE_RATIO },
+      { nodeId: '1', fieldName: 'resolution', role: 'resolution', defaultValue: '720p', fieldData: FD_SEEDANCE_RESOLUTION },
       { nodeId: '1', fieldName: 'prompt', role: 'prompt' },
     ],
   },
 
-  // §3.4 Qwen3 TTS(对白配音):两条 select 都固定 "1"(手写 prompt 模式)。
+  // §3.4 Qwen3 TTS(对白配音):两条 select 都固定 "1"(手写 prompt 模式),官方 curl 无 fieldData。
   VOICE_LINE: {
     webappId: RUNNINGHUB_APP_IDENTITIES.VOICE_LINE.webappId,
     displayName: RUNNINGHUB_APP_IDENTITIES.VOICE_LINE.displayName,
@@ -194,7 +219,7 @@ export const RUNNINGHUB_APP_SCHEMAS: Readonly<Record<RunningHubAppKey, AiAppSche
     fields: [
       { nodeId: '13', fieldName: 'text', role: 'title', defaultValue: '' },
       { nodeId: '14', fieldName: 'text', role: 'prompt' },
-      { nodeId: '1', fieldName: 'version', role: 'version', defaultValue: 'v4.5' },
+      { nodeId: '1', fieldName: 'version', role: 'version', defaultValue: 'v4.5', fieldData: FD_SUNO_VERSION },
     ],
   },
 };

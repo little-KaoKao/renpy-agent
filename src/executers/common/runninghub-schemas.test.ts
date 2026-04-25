@@ -99,4 +99,28 @@ describe('runninghub-schemas registry', () => {
       }),
     ).toBe(false);
   });
+
+  it('populates fieldData for known dropdown enums (MJ v7, Nanobanana2, Seedance, SunoV5)', () => {
+    // 官方 curl 里下拉字段都带 fieldData 枚举字符串 —— schema 必须保留,否则真 API
+    // 可能把枚举字段当自由文本处理。
+    const findField = (
+      key: keyof typeof RUNNINGHUB_APP_SCHEMAS,
+      nodeId: string,
+      fieldName: string,
+    ) =>
+      RUNNINGHUB_APP_SCHEMAS[key].fields.find(
+        (f) => f.nodeId === nodeId && f.fieldName === fieldName,
+      );
+
+    expect(findField('CHARACTER_MAIN_IMAGE', '4', 'model_selected')?.fieldData).toMatch(/Midjourney V7/);
+    expect(findField('CHARACTER_MAIN_IMAGE', '4', 'aspect_rate')?.fieldData).toMatch(/9:16/);
+    expect(findField('CHARACTER_EXPRESSION', '1', 'aspectRatio')?.fieldData).toMatch(/9:16/);
+    expect(findField('CHARACTER_EXPRESSION', '1', 'resolution')?.fieldData).toMatch(/"2k"/);
+    expect(findField('CHARACTER_EXPRESSION', '1', 'channel')?.fieldData).toMatch(/Third-party/);
+    expect(findField('SCENE_BACKGROUND', '1', 'aspectRatio')?.fieldData).toMatch(/16:9/);
+    expect(findField('CUTSCENE_IMAGE_TO_VIDEO', '1', 'duration')?.fieldData).toMatch(/"15"/);
+    expect(findField('CUTSCENE_IMAGE_TO_VIDEO', '1', 'ratio')?.fieldData).toMatch(/adaptive/);
+    expect(findField('CUTSCENE_IMAGE_TO_VIDEO', '1', 'resolution')?.fieldData).toMatch(/720p/);
+    expect(findField('BGM_TRACK', '1', 'version')?.fieldData).toMatch(/v4\.5/);
+  });
 });
