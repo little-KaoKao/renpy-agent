@@ -64,7 +64,15 @@ describe('generateSceneBackground', () => {
     const reloaded = await loadRegistry(registryPath);
     expect(reloaded.entries[0]!.assetType).toBe('scene_background');
     expect(client.submitTask).toHaveBeenCalledWith(
-      expect.objectContaining({ apiId: 'api-448183260' }),
+      expect.objectContaining({
+        appKey: 'SCENE_BACKGROUND',
+        inputs: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'prompt',
+            value: expect.stringContaining('moonlit courtyard'),
+          }),
+        ]),
+      }),
     );
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runImageTask, RunImageTaskError } from './run-image-task.js';
 import type {
+  AiAppNodeInput,
   RunningHubClient,
   RunningHubTaskResult,
 } from './runninghub-client.js';
@@ -16,6 +17,7 @@ function fakeClient(
 }
 
 const NO_SLEEP = async () => {};
+const PROMPT_INPUT: ReadonlyArray<AiAppNodeInput> = [{ role: 'prompt', value: 'p' }];
 
 describe('runImageTask', () => {
   it('resolves with outputUri when task eventually reports done', async () => {
@@ -26,8 +28,8 @@ describe('runImageTask', () => {
     ]);
 
     const result = await runImageTask({
-      apiId: 'api-x',
-      prompt: 'p',
+      appKey: 'CHARACTER_MAIN_IMAGE',
+      inputs: PROMPT_INPUT,
       client,
       sleep: NO_SLEEP,
       pollIntervalMs: 0,
@@ -35,40 +37,78 @@ describe('runImageTask', () => {
 
     expect(result.outputUri).toBe('https://cdn/out.png');
     expect(result.taskId).toBe('task-fake');
-    expect(submit).toHaveBeenCalledWith({ apiId: 'api-x', prompt: 'p' });
+    expect(submit).toHaveBeenCalledWith({
+      appKey: 'CHARACTER_MAIN_IMAGE',
+      inputs: PROMPT_INPUT,
+    });
     expect(poll).toHaveBeenCalledTimes(3);
   });
 
-  it('forwards referenceImageUri through to submitTask', async () => {
+  it('forwards additional inputs (e.g. first_frame) through to submitTask', async () => {
     const { client, submit } = fakeClient([
       { status: 'done', outputUri: 'https://cdn/out.png' },
     ]);
+    const inputs: AiAppNodeInput[] = [
+      { role: 'prompt', value: 'p' },
+      { role: 'first_frame', value: 'https://ref' },
+    ];
     await runImageTask({
-      apiId: 'api-x',
-      prompt: 'p',
-      referenceImageUri: 'https://ref',
+      appKey: 'CUTSCENE_IMAGE_TO_VIDEO',
+      inputs,
       client,
       sleep: NO_SLEEP,
       pollIntervalMs: 0,
     });
     expect(submit).toHaveBeenCalledWith({
-      apiId: 'api-x',
-      prompt: 'p',
-      referenceImageUri: 'https://ref',
+      appKey: 'CUTSCENE_IMAGE_TO_VIDEO',
+      inputs,
+    });
+  });
+
+  it('forwards instanceType and usePersonalQueue when provided', async () => {
+    const { client, submit } = fakeClient([
+      { status: 'done', outputUri: 'https://cdn/out.png' },
+    ]);
+    await runImageTask({
+      appKey: 'CHARACTER_MAIN_IMAGE',
+      inputs: PROMPT_INPUT,
+      instanceType: 'plus',
+      usePersonalQueue: true,
+      client,
+      sleep: NO_SLEEP,
+      pollIntervalMs: 0,
+    });
+    expect(submit).toHaveBeenCalledWith({
+      appKey: 'CHARACTER_MAIN_IMAGE',
+      inputs: PROMPT_INPUT,
+      instanceType: 'plus',
+      usePersonalQueue: true,
     });
   });
 
   it('throws RunImageTaskError when status=error', async () => {
     const { client } = fakeClient([{ status: 'error', errorMessage: 'prompt blocked' }]);
     await expect(
-      runImageTask({ apiId: 'a', prompt: 'p', client, sleep: NO_SLEEP, pollIntervalMs: 0 }),
+      runImageTask({
+        appKey: 'CHARACTER_MAIN_IMAGE',
+        inputs: PROMPT_INPUT,
+        client,
+        sleep: NO_SLEEP,
+        pollIntervalMs: 0,
+      }),
     ).rejects.toThrow(/prompt blocked/);
   });
 
   it('throws when done but no outputUri', async () => {
     const { client } = fakeClient([{ status: 'done' }]);
     await expect(
-      runImageTask({ apiId: 'a', prompt: 'p', client, sleep: NO_SLEEP, pollIntervalMs: 0 }),
+      runImageTask({
+        appKey: 'CHARACTER_MAIN_IMAGE',
+        inputs: PROMPT_INPUT,
+        client,
+        sleep: NO_SLEEP,
+        pollIntervalMs: 0,
+      }),
     ).rejects.toBeInstanceOf(RunImageTaskError);
   });
 
@@ -81,8 +121,8 @@ describe('runImageTask', () => {
     };
     await expect(
       runImageTask({
-        apiId: 'a',
-        prompt: 'p',
+        appKey: 'CHARACTER_MAIN_IMAGE',
+        inputs: PROMPT_INPUT,
         client,
         sleep,
         now,
@@ -99,8 +139,8 @@ describe('runImageTask', () => {
     ]);
     const onProgress = vi.fn();
     await runImageTask({
-      apiId: 'a',
-      prompt: 'p',
+      appKey: 'CHARACTER_MAIN_IMAGE',
+      inputs: PROMPT_INPUT,
       client,
       sleep: NO_SLEEP,
       pollIntervalMs: 0,
