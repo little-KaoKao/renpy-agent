@@ -86,6 +86,12 @@ export interface AudioUiPipelineStats {
   readonly ui: { readonly ok: number; readonly err: number };
 }
 
+export interface CutscenePipelineStats {
+  readonly ok: number;
+  readonly err: number;
+  readonly skipped: number;
+}
+
 export interface PipelineResult {
   readonly storyName: string;
   readonly gamePath: string;
@@ -94,4 +100,5 @@ export interface PipelineResult {
   readonly storyboarder: StoryboarderOutput;
   readonly testRun: TestRunResult;
   readonly audioUi?: AudioUiPipelineStats;
+  readonly cutscene?: CutscenePipelineStats;
 }

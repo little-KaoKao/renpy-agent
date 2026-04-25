@@ -1,7 +1,7 @@
 # Agentic Galgame 项目计划
 
 > 最后更新:2026-04-25
-> 当前阶段:v0.2 minimal pipeline + v0.3a/b/c 骨架全部落地;Coder 支持 AssetRegistry 真资产绑定;角色/场景设计师/分镜师主干接通 RunningHub(协议已迁到 `/openapi/v2/run/ai-app/{webappId}` + `Authorization: Bearer`,8 个 AppKey 的 `webappId`/`fields[]` 全部登记真值);v0.4 修改闭环三个典型场景编程接口就位(story workspace 持久化 + modifyCharacterAppearance / modifyDialogueLine / reorderShots);v0.5 员工扩招骨架落地(音乐总监 / 配音导演 / 音效设计师 / UI 设计师 = 4 位 POC,BgmTrack/VoiceLine/Sfx/UiDesign 4 文档,RunningHub schema 8 个 AppKey 真值就绪:MJ v7 / Nanobanana2 / Seedance2.0 / Qwen3 TTS / SunoV5)
+> 当前阶段:v0.2 minimal pipeline + v0.3a/b/c 骨架全部落地;Coder 支持 AssetRegistry 真资产绑定;角色/场景设计师/分镜师主干接通 RunningHub(协议已迁到 `/openapi/v2/run/ai-app/{webappId}` + `Authorization: Bearer`,8 个 AppKey 的 `webappId`/`fields[]` 全部登记真值);v0.4 修改闭环三个典型场景编程接口就位(story workspace 持久化 + modifyCharacterAppearance / modifyDialogueLine / reorderShots);v0.5 员工扩招骨架落地(音乐总监 / 配音导演 / 音效设计师 / UI 设计师 = 4 位 POC,BgmTrack/VoiceLine/Sfx/UiDesign 4 文档,RunningHub schema 8 个 AppKey 真值就绪:MJ v7 / Nanobanana2 / Seedance2.0 / Qwen3 TTS / SunoV5);v0.5 末尾补齐 Tier 1 扫尾:表情差分 / 道具 / 时段变体三个 executer + cutscene stage 自动路由 `shot.cutscene`(含 `--cutscene` CLI flag)+ modify e2e 冒烟(纯本地 mock,`scripts/modify-smoke.mjs` 通过)
 
 ---
 
@@ -383,8 +383,8 @@ async function plan() {
 - [X] Coder 识别 registry:`renderScriptRpy(planner, storyboarder, assetRegistry?)` 有 ready 条目就吐 `image bg_x = "images/..."`,没有就 `Solid(...)` 占位
 - [X] 测试:13 文件 91 用例全绿(新增 36:registry/download/swap/image-task/schemas/char-gen/scene-gen/coder-registry)
 - [X] RunningHub AI-App schemas 登记真值(v0.5+ 已把 8 个 AppKey 的 `webappId` + `fields[]` 改为真值,见 [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts);客户端协议同步迁到 `/openapi/v2/run/ai-app/{webappId}` + `Authorization: Bearer`)
-- [ ] 表情差分 + 道具图 + 时段/光照变体(用同样的 runImageTask 路径再封 2 个 executer)
-- [ ] 典型修改 e2e 冒烟:跑 v0.2 pipeline → 调 `generateCharacterMainImage` / `generateSceneBackground` → 重渲染 script.rpy → `renpy.exe lint` 通过
+- [X] 表情差分 + 道具图 + 时段/光照变体:[generate-expression.ts](src/executers/character-designer/generate-expression.ts)(Nanobanana2 图生图,1~3 张参考图)/ [generate-prop.ts](src/executers/scene-designer/generate-prop.ts) / [generate-time-variant.ts](src/executers/scene-designer/generate-time-variant.ts) 全部复用 `runImageTask`,logicalKey 独立(`character:<slug>:expr:<e>` / `prop:<slug>` / `scene:<slug>:time:<t>`)
+- [X] 典型修改 e2e 冒烟:[scripts/modify-smoke.mjs](scripts/modify-smoke.mjs) —— 纯本地 mock(scripted LLM + mock RunningHub),走一遍 v0.2 pipeline → character/scene executer → modify character → rebuild,验证三次 Stage A ↔ B ↔ A 切换。真 lint 留给 v0.3b 再补(需要 SDK)
 
 **v0.3c —— 分镜师接入(视频路径)**
 

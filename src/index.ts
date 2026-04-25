@@ -113,6 +113,33 @@ export type {
 } from './executers/scene-designer/generate-background.js';
 
 export {
+  generatePropImage,
+  buildPropPrompt,
+} from './executers/scene-designer/generate-prop.js';
+export type {
+  GeneratePropImageParams,
+  GeneratePropImageResult,
+} from './executers/scene-designer/generate-prop.js';
+
+export {
+  generateSceneTimeVariant,
+  buildSceneTimeVariantPrompt,
+} from './executers/scene-designer/generate-time-variant.js';
+export type {
+  GenerateSceneTimeVariantParams,
+  GenerateSceneTimeVariantResult,
+} from './executers/scene-designer/generate-time-variant.js';
+
+export {
+  generateCharacterExpression,
+  buildCharacterExpressionPrompt,
+} from './executers/character-designer/generate-expression.js';
+export type {
+  GenerateCharacterExpressionParams,
+  GenerateCharacterExpressionResult,
+} from './executers/character-designer/generate-expression.js';
+
+export {
   generateCutsceneVideo,
   buildCutscenePrompt,
 } from './executers/storyboarder/generate-cutscene.js';
@@ -124,7 +151,10 @@ export type {
 
 export {
   logicalKeyForCharacter,
+  logicalKeyForCharacterExpression,
   logicalKeyForScene,
+  logicalKeyForSceneTimeVariant,
+  logicalKeyForProp,
   logicalKeyForBgm,
   logicalKeyForVoiceLine,
   logicalKeyForSfx,
@@ -161,6 +191,8 @@ export type {
   StoryboarderOutputCutscene,
   TestRunResult,
   PipelineResult,
+  AudioUiPipelineStats,
+  CutscenePipelineStats,
 } from './pipeline/types.js';
 
 export { runPlanner } from './pipeline/planner.js';
@@ -175,6 +207,15 @@ export { runQa, parseLintOutput } from './pipeline/qa.js';
 export { runPipeline, slugifyStoryName } from './pipeline/run-pipeline.js';
 export { rebuildGameProject } from './pipeline/rebuild.js';
 export type { RebuildOptions, RebuildResult } from './pipeline/rebuild.js';
+
+export { runCutsceneStage } from './pipeline/cutscene-stage.js';
+export type {
+  CutsceneStageStats,
+  CutsceneStageSkipped,
+  CutsceneStageOutput,
+  CutsceneStageLogger,
+  RunCutsceneStageParams,
+} from './pipeline/cutscene-stage.js';
 
 export {
   saveStoryWorkspace,
