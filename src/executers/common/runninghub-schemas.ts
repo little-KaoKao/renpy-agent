@@ -187,27 +187,33 @@ export const RUNNINGHUB_APP_SCHEMAS: Readonly<Record<RunningHubAppKey, AiAppSche
     ],
   },
 
-  // §3.4 Qwen3 TTS(对白配音):两条 select 都固定 "1"(手写 prompt 模式),官方 curl 无 fieldData。
+  // §3.4 Qwen3 TTS(对白配音):两条 select 是「随机 / 手写」二选一,curl 的
+  //   `description: "随机/手写..."` 标得不明显。实测 select="1" 是**随机**(模型
+  //   自由发挥,忽略 voice_text / line_text,产出 30-50s 无关音频);select="2"
+  //   是**手写**(严格按 voice_text 描述的音色 + line_text 的台词生成,典型
+  //   1-3s / 句)。voice_text 对音色只是"创意提示",模型未必完全听话,但
+  //   line_text 在 select="2" 下是硬约束。
   VOICE_LINE: {
     webappId: RUNNINGHUB_APP_IDENTITIES.VOICE_LINE.webappId,
     displayName: RUNNINGHUB_APP_IDENTITIES.VOICE_LINE.displayName,
     fields: [
-      { nodeId: '7', fieldName: 'select', role: 'option', defaultValue: '1' },
+      { nodeId: '7', fieldName: 'select', role: 'option', defaultValue: '2' },
       { nodeId: '2', fieldName: 'text', role: 'voice_text' },
-      { nodeId: '6', fieldName: 'select', role: 'option', defaultValue: '1' },
+      { nodeId: '6', fieldName: 'select', role: 'option', defaultValue: '2' },
       { nodeId: '1', fieldName: 'text', role: 'line_text' },
     ],
   },
 
   // §3.4 SFX 暂借 Qwen3 TTS:音效描述塞 line_text,「朗读者」塞 voice_text。
+  // 同 VOICE_LINE,select="2" = 手写(按字生成),select="1" = 随机。
   // TODO: swap to dedicated TTA (text-to-audio) when available.
   SFX: {
     webappId: RUNNINGHUB_APP_IDENTITIES.SFX.webappId,
     displayName: RUNNINGHUB_APP_IDENTITIES.SFX.displayName,
     fields: [
-      { nodeId: '7', fieldName: 'select', role: 'option', defaultValue: '1' },
+      { nodeId: '7', fieldName: 'select', role: 'option', defaultValue: '2' },
       { nodeId: '2', fieldName: 'text', role: 'voice_text' },
-      { nodeId: '6', fieldName: 'select', role: 'option', defaultValue: '1' },
+      { nodeId: '6', fieldName: 'select', role: 'option', defaultValue: '2' },
       { nodeId: '1', fieldName: 'text', role: 'line_text' },
     ],
   },

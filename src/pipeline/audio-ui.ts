@@ -73,8 +73,10 @@ export interface RunAudioUiStageParams {
   readonly fetchFn?: FetchLike;
 }
 
-const DEFAULT_VOICE_TAG =
-  'soft anime-style voice, gentle and natural delivery';
+// Qwen3 TTS 的 voice_text 是「创意提示」,不是 TTS 音色参数 —— 模型会基于它
+// 解读年龄 / 性别 / 情绪,英文描述实测效果差(会触发模型把英文当台词读一部分)。
+// 用短的中文角色卡式描述效果稳定得多。
+const DEFAULT_VOICE_TAG = '成年女声,自然温柔,语速平稳';
 const DEFAULT_UI_MOOD = 'soft pastel visual-novel menu';
 const VOICE_LINE_BUDGET = 5;
 const SFX_KEYWORDS = ['door', 'footstep', 'wind', 'rain', 'thunder', 'clock', 'heartbeat'];
