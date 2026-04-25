@@ -2,6 +2,7 @@ import type { LlmClient } from '../llm/types.js';
 import { extractJsonBlock } from '../llm/claude-client.js';
 import { retryJsonParse } from '../llm/retry.js';
 import { wrapParseError } from '../llm/stage-parse-error.js';
+import { repairCjkInnerQuotes } from '../llm/json-repair.js';
 import type { PlannerOutput, WriterOutput } from './types.js';
 
 const WRITER_SYSTEM = `You are the Writer for a Ren'Py galgame.
@@ -25,7 +26,13 @@ interface WriterOutput {
   }>;
 }
 \`\`\`
-No prose outside the fence.`;
+No prose outside the fence.
+
+CRITICAL: If a line of dialogue needs quoted speech or thought inside it, use
+Chinese full-width quotes 「」 or 『』, NOT raw ASCII double quotes. Raw inner
+\`"\` breaks JSON parsing.
+Bad:  "text": "他说"别走"。"
+Good: "text": "他说「别走」。"`;
 
 export interface RunWriterParams {
   readonly planner: PlannerOutput;
@@ -54,7 +61,7 @@ export async function runWriter(params: RunWriterParams): Promise<WriterOutput> 
       });
       try {
         const json = extractJsonBlock(res.content);
-        const parsed = JSON.parse(json) as WriterOutput;
+        const parsed = tryParseWithRepair<WriterOutput>(json);
         assertWriterOutput(parsed);
         return parsed;
       } catch (e) {
@@ -65,6 +72,18 @@ export async function runWriter(params: RunWriterParams): Promise<WriterOutput> 
       console.warn(`[writer] attempt ${attempt} produced invalid output (${err.message}); retrying...`);
     },
   });
+}
+
+function tryParseWithRepair<T>(json: string): T {
+  try {
+    return JSON.parse(json) as T;
+  } catch (firstErr) {
+    const repaired = repairCjkInnerQuotes(json);
+    if (repaired !== json) {
+      return JSON.parse(repaired) as T;
+    }
+    throw firstErr;
+  }
 }
 
 function assertWriterOutput(value: unknown): asserts value is WriterOutput {

@@ -5,6 +5,7 @@ import type { LlmClient } from '../llm/types.js';
 import { extractJsonBlock } from '../llm/claude-client.js';
 import { retryJsonParse } from '../llm/retry.js';
 import { wrapParseError } from '../llm/stage-parse-error.js';
+import { repairCjkInnerQuotes } from '../llm/json-repair.js';
 import type { PlannerOutput } from './types.js';
 
 const PLANNER_SYSTEM_TEMPLATE = `You are the Planner for a galgame production pipeline.
@@ -35,7 +36,17 @@ interface PlannerOutput {
   chapterOutline: string;     // one paragraph describing the single chapter's arc
 }
 \`\`\`
-No prose outside the fence.`;
+No prose outside the fence.
+
+CRITICAL JSON HYGIENE:
+- If you need to put a quoted phrase INSIDE a string value, use Chinese full-width
+  quotes 「」 or 『』 or backslash-escape them (\\"...\\"). Do NOT use raw ASCII
+  double quotes \`"..."\` inside a string — the JSON parser will treat the inner
+  \`"\` as the end of the string and reject the whole response.
+  Bad:  "description": "她轻声说"我爱你",然后..."
+  Good: "description": "她轻声说「我爱你」,然后..."
+  Good: "description": "她轻声说\\"我爱你\\",然后..."
+- Same rule for chapterOutline and all other string values.`;
 
 let cachedSchema: string | null = null;
 
@@ -71,7 +82,7 @@ export async function runPlanner(params: RunPlannerParams): Promise<PlannerOutpu
       });
       try {
         const json = extractJsonBlock(res.content);
-        const parsed = JSON.parse(json) as PlannerOutput;
+        const parsed = tryParseWithRepair<PlannerOutput>(json);
         assertPlannerOutput(parsed);
         return parsed;
       } catch (e) {
@@ -82,6 +93,18 @@ export async function runPlanner(params: RunPlannerParams): Promise<PlannerOutpu
       console.warn(`[planner] attempt ${attempt} produced invalid output (${err.message}); retrying...`);
     },
   });
+}
+
+function tryParseWithRepair<T>(json: string): T {
+  try {
+    return JSON.parse(json) as T;
+  } catch (firstErr) {
+    const repaired = repairCjkInnerQuotes(json);
+    if (repaired !== json) {
+      return JSON.parse(repaired) as T;
+    }
+    throw firstErr;
+  }
 }
 
 function assertPlannerOutput(value: unknown): asserts value is PlannerOutput {

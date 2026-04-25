@@ -2,6 +2,7 @@ import type { LlmClient } from '../llm/types.js';
 import { extractJsonBlock } from '../llm/claude-client.js';
 import { retryJsonParse } from '../llm/retry.js';
 import { wrapParseError } from '../llm/stage-parse-error.js';
+import { repairCjkInnerQuotes } from '../llm/json-repair.js';
 import type { PlannerOutput, StoryboarderOutput, WriterOutput } from './types.js';
 
 const STORYBOARDER_SYSTEM = `You are the Storyboarder for a Ren'Py galgame Stage-A playable demo.
@@ -56,7 +57,11 @@ interface StoryboarderOutput {
 }
 \`\`\`
 Shots must be non-empty, contiguously numbered starting at 1, and <= 8 total.
-No prose outside the fence.`;
+No prose outside the fence.
+
+CRITICAL: If a dialogue line or description needs quoted speech inside it, use
+Chinese full-width quotes 「」 or 『』, NOT raw ASCII double quotes. Raw inner
+\`"\` breaks JSON parsing.`;
 
 export interface RunStoryboarderParams {
   readonly planner: PlannerOutput;
@@ -93,7 +98,7 @@ export async function runStoryboarder(
       });
       try {
         const json = extractJsonBlock(res.content);
-        const parsed = JSON.parse(json) as StoryboarderOutput;
+        const parsed = tryParseWithRepair<StoryboarderOutput>(json);
         assertStoryboarderOutput(parsed);
         return parsed;
       } catch (e) {
@@ -104,6 +109,18 @@ export async function runStoryboarder(
       console.warn(`[storyboarder] attempt ${attempt} produced invalid output (${err.message}); retrying...`);
     },
   });
+}
+
+function tryParseWithRepair<T>(json: string): T {
+  try {
+    return JSON.parse(json) as T;
+  } catch (firstErr) {
+    const repaired = repairCjkInnerQuotes(json);
+    if (repaired !== json) {
+      return JSON.parse(repaired) as T;
+    }
+    throw firstErr;
+  }
 }
 
 function assertStoryboarderOutput(
