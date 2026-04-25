@@ -1,6 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { AnthropicBedrock } from '@anthropic-ai/bedrock-sdk';
-import type { LlmChatParams, LlmClient, LlmResponse } from './types.js';
+import type {
+  LlmChatParams,
+  LlmClient,
+  LlmContentBlock,
+  LlmResponse,
+  LlmStopReason,
+  LlmToolChatParams,
+  LlmToolChatResponse,
+} from './types.js';
 
 export const CLAUDE_DIRECT_DEFAULT_MODEL = 'claude-sonnet-4-6';
 export const CLAUDE_BEDROCK_DEFAULT_MODEL = 'us.anthropic.claude-sonnet-4-6';
@@ -52,7 +60,11 @@ export class ClaudeLlmClient implements LlmClient {
           'Bedrock credentials missing. Set AWS_BEARER_TOKEN_BEDROCK (bearer token) or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY.',
         );
       }
-      this.client = new AnthropicBedrock({ awsRegion, apiKey }) as unknown as MessagesClient;
+      this.client = new AnthropicBedrock({
+        awsRegion,
+        apiKey,
+        maxRetries: 4,
+      }) as unknown as MessagesClient;
     } else {
       const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
       if (!apiKey) {
@@ -60,7 +72,7 @@ export class ClaudeLlmClient implements LlmClient {
           'ANTHROPIC_API_KEY not set. Either set it for direct Anthropic, or set CLAUDE_CODE_USE_BEDROCK=1 for AWS Bedrock.',
         );
       }
-      this.client = new Anthropic({ apiKey });
+      this.client = new Anthropic({ apiKey, maxRetries: 4 });
     }
 
     this.model =
@@ -104,6 +116,88 @@ export class ClaudeLlmClient implements LlmClient {
       },
     };
   }
+
+  async chatWithTools(params: LlmToolChatParams): Promise<LlmToolChatResponse> {
+    const systemParts: string[] = [];
+    const messages: Anthropic.MessageParam[] = [];
+    for (const m of params.messages) {
+      if (m.role === 'system') {
+        if (typeof m.content !== 'string') {
+          throw new Error('chatWithTools(): system messages must have string content.');
+        }
+        systemParts.push(m.content);
+        continue;
+      }
+      messages.push({
+        role: m.role,
+        content: translateMessageContent(m.content),
+      });
+    }
+    if (messages.length === 0) {
+      throw new Error('chatWithTools() requires at least one user/assistant message.');
+    }
+
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: params.maxTokens ?? CLAUDE_DEFAULT_MAX_TOKENS,
+      temperature: params.temperature,
+      system: systemParts.length > 0 ? systemParts.join('\n\n') : undefined,
+      tools: params.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+      })),
+      messages,
+    });
+
+    const content: LlmContentBlock[] = [];
+    for (const block of response.content) {
+      if (block.type === 'text') {
+        content.push({ type: 'text', text: block.text });
+      } else if (block.type === 'tool_use') {
+        content.push({
+          type: 'tool_use',
+          id: block.id,
+          name: block.name,
+          input: block.input,
+        });
+      }
+    }
+
+    return {
+      content,
+      stopReason: (response.stop_reason ?? 'end_turn') as LlmStopReason,
+      usage: {
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+      },
+    };
+  }
+}
+
+function translateMessageContent(
+  content: LlmToolChatParams['messages'][number]['content'],
+): string | Anthropic.ContentBlockParam[] {
+  if (typeof content === 'string') return content;
+  return content.map((block): Anthropic.ContentBlockParam => {
+    if (block.type === 'text') {
+      return { type: 'text', text: block.text };
+    }
+    if (block.type === 'tool_use') {
+      return {
+        type: 'tool_use',
+        id: block.id,
+        name: block.name,
+        input: block.input as Record<string, unknown>,
+      };
+    }
+    return {
+      type: 'tool_result',
+      tool_use_id: block.toolUseId,
+      content: block.content,
+      ...(block.isError ? { is_error: true } : {}),
+    };
+  });
 }
 
 export function extractJsonBlock(response: string): string {

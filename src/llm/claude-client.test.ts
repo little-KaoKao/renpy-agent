@@ -115,6 +115,169 @@ describe('ClaudeLlmClient', () => {
   });
 });
 
+describe('ClaudeLlmClient.chatWithTools', () => {
+  function makeToolUseClient(
+    blocks: ReadonlyArray<Record<string, unknown>>,
+    stopReason: string,
+  ) {
+    const create = vi.fn().mockResolvedValue({
+      content: blocks,
+      stop_reason: stopReason,
+      usage: { input_tokens: 5, output_tokens: 7 },
+    });
+    return { create, client: { messages: { create } } };
+  }
+
+  it('passes tools + user/assistant messages + tool_result content through to SDK', async () => {
+    const { create, client } = makeToolUseClient(
+      [{ type: 'text', text: 'done' }],
+      'end_turn',
+    );
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'direct' });
+
+    await llm.chatWithTools({
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'hello' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tu_1',
+              name: 'echo',
+              input: { msg: 'hi' },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              toolUseId: 'tu_1',
+              content: '{"echoed":"hi"}',
+            },
+          ],
+        },
+      ],
+      tools: [
+        {
+          name: 'echo',
+          description: 'echoes input',
+          inputSchema: {
+            type: 'object',
+            properties: { msg: { type: 'string' } },
+            required: ['msg'],
+          },
+        },
+      ],
+    });
+
+    const call = create.mock.calls[0]![0];
+    expect(call.system).toBe('sys');
+    expect(call.tools).toEqual([
+      {
+        name: 'echo',
+        description: 'echoes input',
+        input_schema: {
+          type: 'object',
+          properties: { msg: { type: 'string' } },
+          required: ['msg'],
+        },
+      },
+    ]);
+    expect(call.messages).toEqual([
+      { role: 'user', content: 'hello' },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tu_1',
+            name: 'echo',
+            input: { msg: 'hi' },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'tu_1',
+            content: '{"echoed":"hi"}',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('returns tool_use blocks + stopReason=tool_use when SDK stops on tool_use', async () => {
+    const { client } = makeToolUseClient(
+      [
+        { type: 'text', text: 'let me check' },
+        {
+          type: 'tool_use',
+          id: 'tu_42',
+          name: 'echo',
+          input: { msg: 'hi' },
+        },
+      ],
+      'tool_use',
+    );
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'direct' });
+
+    const res = await llm.chatWithTools({
+      messages: [{ role: 'user', content: 'please call echo' }],
+      tools: [
+        {
+          name: 'echo',
+          description: 'echoes input',
+          inputSchema: { type: 'object' },
+        },
+      ],
+    });
+
+    expect(res.stopReason).toBe('tool_use');
+    expect(res.content).toEqual([
+      { type: 'text', text: 'let me check' },
+      {
+        type: 'tool_use',
+        id: 'tu_42',
+        name: 'echo',
+        input: { msg: 'hi' },
+      },
+    ]);
+    expect(res.usage).toEqual({ inputTokens: 5, outputTokens: 7 });
+  });
+
+  it('returns stopReason=end_turn when SDK stops naturally', async () => {
+    const { client } = makeToolUseClient([{ type: 'text', text: 'final' }], 'end_turn');
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'direct' });
+
+    const res = await llm.chatWithTools({
+      messages: [{ role: 'user', content: 'q' }],
+      tools: [],
+    });
+
+    expect(res.stopReason).toBe('end_turn');
+    expect(res.content).toEqual([{ type: 'text', text: 'final' }]);
+  });
+
+  it('throws when no user/assistant messages are provided', async () => {
+    const { client } = makeToolUseClient([{ type: 'text', text: 'x' }], 'end_turn');
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'direct' });
+
+    await expect(
+      llm.chatWithTools({
+        messages: [{ role: 'system', content: 'only-sys' }],
+        tools: [],
+      }),
+    ).rejects.toThrow(/at least one user/);
+  });
+});
+
 describe('resolveClaudeMode', () => {
   it('returns bedrock when CLAUDE_CODE_USE_BEDROCK=1', () => {
     expect(resolveClaudeMode({ CLAUDE_CODE_USE_BEDROCK: '1' } as any)).toBe('bedrock');
