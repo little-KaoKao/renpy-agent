@@ -1,94 +1,326 @@
-// RunningHub 握手 smoke test(v0.5+ /openapi/v2 版)
+// RunningHub 真 key smoke —— 8 个 AppKey 一次性体检。
 //
-// 目的:验证 .env 里的 RUNNINGHUB_API_KEY 能打通 RunningHub 新协议,拿到任务 ID 并查一次状态。
-// 不在乎产出图片质量 —— 握手成功即可。
+// 与 src/executers/common/runninghub-{client,schemas}.ts 对齐,使用 `dist/`
+// 产物以复用生产代码。先 `pnpm build`,再:
 //
-// 用法(fnm 的 Node 已在 PATH):
-//   node --env-file=.env scripts/runninghub-smoke.mjs
+//   node --env-file=.env scripts/runninghub-smoke.mjs            # 全跑 8 条
+//   node --env-file=.env scripts/runninghub-smoke.mjs CHARACTER_MAIN_IMAGE SCENE_BACKGROUND
 //
-// 响应语义(v2 submit):
-//   { taskId, status: "RUNNING", errorCode: "", errorMessage: "", ... }  → 握手 OK
-//   { errorCode: "APIKEY_INVALID", errorMessage: "..." }                 → apiKey 无效
-//   { errorCode: "WEBAPP_NOT_EXISTS", ... }                              → webappId 找不到
-//   HTTP 401 / 403                                                       → Authorization header 格式或权限问题
-//   网络错误 / DNS 错                                                     → 国内网络问题
+// 结果落在 `runtime/smoke/<ISO8601-timestamp>/`:每条 case 一个 `.json`
+// 和(若下载成功)一份真产物,外加 `summary.json` 汇总。依赖缺失时直接报错
+// 退出,不自动补齐 —— 显式让用户选。
 //
-// /task/openapi/status(第二步)还是 v1 envelope:{ code: 0, data: "RUNNING"|{...} }。
-//
-// 协议变更(v0.5+,参考 src/executers/common/runninghub-client.ts):
-//   POST /openapi/v2/run/ai-app/{webappId}
-//   Headers: Authorization: Bearer <RUNNINGHUB_API_KEY>, Content-Type: application/json
-//   Body:    { nodeInfoList, instanceType, usePersonalQueue }  (不再放 apiKey)
-//
-// 用 Midjourney v7 文生图(CHARACTER_MAIN_IMAGE)做握手 —— 最简单的 text-only AI-App,
-// webappId / fields 对齐 src/executers/common/runninghub-schemas.ts 里的真值。
+// 成本提醒:完整 8 条 = MJv7 1 + Nanobanana2 ×2 + Seedance ×2(视频贵)+
+// Qwen3 TTS ×2 + SunoV5(贵)。脚本起跑前有 3s 确认窗口,Ctrl-C 可中止。
 
-const BASE = 'https://www.runninghub.cn';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
-// Midjourney v7 文生图 —— CHARACTER_MAIN_IMAGE。
-// 与 src/executers/common/runninghub-schemas.ts 的 RUNNINGHUB_APP_SCHEMAS.CHARACTER_MAIN_IMAGE 保持一致。
-const WEBAPP_ID = '1941094122503749633';
-const NODE_INFO_LIST = [
-  { nodeId: '4', fieldName: 'model_selected', fieldValue: 'Midjourney V7' },
-  { nodeId: '4', fieldName: 'aspect_rate', fieldValue: '3:4' },
-  { nodeId: '1', fieldName: 'select', fieldValue: '1' },
-  { nodeId: '6', fieldName: 'text', fieldValue: 'a calico cat sitting on a moon, anime style' },
+import {
+  HttpRunningHubClient,
+  RUNNINGHUB_APP_SCHEMAS,
+  runImageTask,
+  downloadAsset,
+  inferExtensionFromUrl,
+} from '../dist/index.js';
+
+const APP_KEYS = [
+  'CHARACTER_MAIN_IMAGE',
+  'SCENE_BACKGROUND',
+  'CHARACTER_EXPRESSION',
+  'CHARACTER_DYNAMIC_SPRITE',
+  'CUTSCENE_IMAGE_TO_VIDEO',
+  'VOICE_LINE',
+  'SFX',
+  'BGM_TRACK',
 ];
 
-const apiKey = process.env.RUNNINGHUB_API_KEY;
-if (!apiKey) {
-  console.error('❌ RUNNINGHUB_API_KEY 未设置,检查 .env');
-  process.exit(1);
-}
+// Dependency edges: downstream → upstream. Downstream case inherits the
+// upstream case's outputUri as a role value (see CASES below).
+const DEPENDENCIES = {
+  CHARACTER_EXPRESSION: ['SCENE_BACKGROUND'],
+  CUTSCENE_IMAGE_TO_VIDEO: ['SCENE_BACKGROUND'],
+  CHARACTER_DYNAMIC_SPRITE: ['CHARACTER_MAIN_IMAGE'],
+};
 
-async function postJson(path, body, extraHeaders = {}) {
-  const res = await fetch(BASE + path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...extraHeaders },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    return { httpStatus: res.status, raw: text };
-  }
-  return { httpStatus: res.status, json };
-}
-
-const submitPath = `/openapi/v2/run/ai-app/${WEBAPP_ID}`;
-console.log('[1/2] 提交任务 →', BASE + submitPath);
-const submit = await postJson(
-  submitPath,
-  {
-    nodeInfoList: NODE_INFO_LIST,
-    instanceType: 'default',
-    usePersonalQueue: 'false',
+// Per-AppKey smoke definition:
+//   - `inputs(ctx)` returns the AiAppNodeInput[] to submit. `ctx` exposes the
+//     outputUri of any already-completed upstream case.
+//   - `extFallback` is the file extension to save with if inferExtensionFromUrl
+//     can't figure one out from the URL.
+const CASES = {
+  CHARACTER_MAIN_IMAGE: {
+    inputs: () => [{ role: 'prompt', value: 'a cat girl in school uniform, anime style' }],
+    extFallback: '.png',
   },
-  { Authorization: `Bearer ${apiKey}` },
-);
-console.log('HTTP', submit.httpStatus);
-console.log(JSON.stringify(submit.json ?? submit.raw, null, 2));
+  SCENE_BACKGROUND: {
+    inputs: () => [{ role: 'prompt', value: 'anime classroom at sunset, soft warm light' }],
+    extFallback: '.png',
+  },
+  CHARACTER_EXPRESSION: {
+    inputs: (ctx) => [
+      { role: 'prompt', value: 'smiling face, close-up portrait' },
+      { role: 'reference_image_1', value: ctx.uriOf('SCENE_BACKGROUND') },
+    ],
+    extFallback: '.png',
+  },
+  CHARACTER_DYNAMIC_SPRITE: {
+    inputs: (ctx) => [
+      { role: 'prompt', value: 'gentle breathing, subtle hair movement' },
+      { role: 'first_frame', value: ctx.uriOf('CHARACTER_MAIN_IMAGE') },
+    ],
+    extFallback: '.mp4',
+  },
+  CUTSCENE_IMAGE_TO_VIDEO: {
+    inputs: (ctx) => [
+      { role: 'prompt', value: 'slow camera pan, cinematic lighting' },
+      { role: 'first_frame', value: ctx.uriOf('SCENE_BACKGROUND') },
+    ],
+    extFallback: '.mp4',
+  },
+  VOICE_LINE: {
+    inputs: () => [
+      { role: 'voice_text', value: 'gentle female voice, soft and warm' },
+      { role: 'line_text', value: '你好,初次见面。' },
+    ],
+    extFallback: '.mp3',
+  },
+  SFX: {
+    inputs: () => [
+      { role: 'voice_text', value: 'ambient sound field, no voice, pure environmental audio' },
+      { role: 'line_text', value: 'rain on window' },
+    ],
+    extFallback: '.mp3',
+  },
+  BGM_TRACK: {
+    inputs: () => [
+      { role: 'title', value: 'smoke-test' },
+      { role: 'prompt', value: 'piano ballad, melancholic, slow tempo' },
+    ],
+    extFallback: '.mp3',
+  },
+};
 
-// v2 提交响应:taskId 直接在顶层,没有 code/data 包装。
-// errorCode 是空串表示成功,有值表示失败(例如 "APIKEY_INVALID")。
-const taskId = submit.json?.taskId;
-const errorCode = submit.json?.errorCode;
-if (!taskId || errorCode) {
-  console.log('\n⚠️  未拿到 taskId — 握手失败。根据上面的 errorCode/errorMessage 判断:');
-  console.log('    WEBAPP_NOT_EXISTS    → webappId 错,去控制台核对');
-  console.log('    APIKEY_INVALID       → apiKey 无效');
-  console.log('    HTTP 401/403         → Authorization header 格式错或权限问题');
-  process.exit(0);
+function parseAppKeys(argv) {
+  if (argv.length === 0) return APP_KEYS.slice();
+  const unknown = argv.filter((k) => !APP_KEYS.includes(k));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown AppKey(s): ${unknown.join(', ')}\n` +
+        `Valid keys: ${APP_KEYS.join(', ')}`,
+    );
+  }
+  return Array.from(new Set(argv));
 }
 
-// 注:/task/openapi/status 和 /task/openapi/outputs 目前仍是旧路径(body.apiKey)。
-console.log('\n[2/2] 查任务状态 →', BASE + '/task/openapi/status');
-const status = await postJson('/task/openapi/status', { apiKey, taskId });
-console.log('HTTP', status.httpStatus);
-console.log(JSON.stringify(status.json ?? status.raw, null, 2));
+function checkDependencies(selected) {
+  const inSet = new Set(selected);
+  const missing = [];
+  for (const key of selected) {
+    const deps = DEPENDENCIES[key] ?? [];
+    for (const dep of deps) {
+      if (!inSet.has(dep)) missing.push({ key, dep });
+    }
+  }
+  if (missing.length > 0) {
+    const lines = missing.map(
+      ({ key, dep }) =>
+        `  ${key} requires ${dep} in the run list.`,
+    );
+    throw new Error(
+      `Missing dependencies:\n${lines.join('\n')}\n` +
+        `Either add the upstream key(s) explicitly, or omit all arguments to run the full set.`,
+    );
+  }
+}
 
-console.log('\n✅ 握手 OK — HTTP 通路、Bearer 认证、任务创建都通。');
-console.log('   taskId:', taskId);
-console.log('   (轮询到 SUCCESS 后可用 /task/openapi/outputs 取 fileUrl,smoke test 不等)');
+function topoSort(selected) {
+  const inSet = new Set(selected);
+  const visited = new Set();
+  const out = [];
+  const visit = (key) => {
+    if (visited.has(key)) return;
+    visited.add(key);
+    for (const dep of DEPENDENCIES[key] ?? []) {
+      if (inSet.has(dep)) visit(dep);
+    }
+    out.push(key);
+  };
+  for (const key of selected) visit(key);
+  return out;
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function timestampSlug(d = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+    `-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+  );
+}
+
+async function runCase(appKey, client, smokeDir, ctx) {
+  const definition = CASES[appKey];
+  const deps = DEPENDENCIES[appKey] ?? [];
+  const missingDep = deps.find((d) => !ctx.results[d] || ctx.results[d].status !== 'ok');
+  if (missingDep) {
+    return {
+      appKey,
+      status: 'skipped',
+      reason: `upstream ${missingDep} did not succeed`,
+    };
+  }
+
+  const t0 = Date.now();
+  let inputs;
+  try {
+    inputs = definition.inputs(ctx);
+  } catch (err) {
+    return {
+      appKey,
+      status: 'error',
+      durationMs: Date.now() - t0,
+      error: `could not build inputs: ${String(err?.message ?? err)}`,
+    };
+  }
+
+  let taskId;
+  let outputUri;
+  try {
+    const result = await runImageTask({ client, appKey, inputs });
+    taskId = result.taskId;
+    outputUri = result.outputUri;
+  } catch (err) {
+    return {
+      appKey,
+      status: 'error',
+      durationMs: Date.now() - t0,
+      taskId: err?.taskId,
+      error: String(err?.message ?? err),
+    };
+  }
+
+  let localFile;
+  let byteLength;
+  try {
+    const ext = inferExtensionFromUrl(outputUri);
+    const filename = ext === '.bin' ? `${appKey}${definition.extFallback}` : `${appKey}${ext}`;
+    const dl = await downloadAsset({
+      remoteUrl: outputUri,
+      gameDir: smokeDir,
+      targetRelativePath: filename,
+    });
+    localFile = dl.localRelativePath;
+    byteLength = dl.byteLength;
+  } catch (err) {
+    return {
+      appKey,
+      status: 'error',
+      durationMs: Date.now() - t0,
+      taskId,
+      outputUri,
+      error: `submit+poll ok but download failed: ${String(err?.message ?? err)}`,
+    };
+  }
+
+  return {
+    appKey,
+    status: 'ok',
+    durationMs: Date.now() - t0,
+    taskId,
+    outputUri,
+    localFile,
+    byteLength,
+  };
+}
+
+async function writeJson(path, value) {
+  await writeFile(path, JSON.stringify(value, null, 2) + '\n', 'utf8');
+}
+
+async function main() {
+  const apiKey = process.env.RUNNINGHUB_API_KEY;
+  if (!apiKey) {
+    console.error('❌ RUNNINGHUB_API_KEY 未设置,请检查 .env');
+    process.exit(1);
+  }
+
+  const argv = process.argv.slice(2);
+  let selected;
+  try {
+    selected = parseAppKeys(argv);
+    checkDependencies(selected);
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
+  const ordered = topoSort(selected);
+
+  console.log('Smoke plan (in execution order):');
+  for (const key of ordered) console.log(`  - ${key}`);
+  console.log(
+    `\n⚠️  This will submit ${ordered.length} paid RunningHub job(s) ` +
+      `(MJv7 / Nanobanana2 / Seedance / Qwen3 TTS / SunoV5, ~seconds to minutes each).\n` +
+      `   Press Ctrl-C within 3s to abort...`,
+  );
+  await sleep(3000);
+  console.log('Starting.\n');
+
+  const client = new HttpRunningHubClient({
+    apiKey,
+    appSchemas: RUNNINGHUB_APP_SCHEMAS,
+  });
+
+  const smokeDir = resolve(process.cwd(), 'runtime', 'smoke', timestampSlug());
+  await mkdir(smokeDir, { recursive: true });
+
+  const ctx = {
+    results: {},
+    uriOf(key) {
+      const r = this.results[key];
+      if (!r || r.status !== 'ok' || !r.outputUri) {
+        throw new Error(`upstream ${key} has no outputUri (status=${r?.status ?? 'missing'})`);
+      }
+      return r.outputUri;
+    },
+  };
+
+  for (const appKey of ordered) {
+    process.stdout.write(`[${appKey}] running... `);
+    const result = await runCase(appKey, client, smokeDir, ctx);
+    ctx.results[appKey] = result;
+    await writeJson(resolve(smokeDir, `${appKey}.json`), result);
+    if (result.status === 'ok') {
+      console.log(`ok (${result.durationMs}ms, ${result.byteLength}B → ${result.localFile})`);
+    } else if (result.status === 'skipped') {
+      console.log(`skipped (${result.reason})`);
+    } else {
+      console.log(`error: ${result.error}`);
+    }
+  }
+
+  const summary = {
+    startedAt: new Date().toISOString(),
+    smokeDir,
+    requested: argv.length > 0 ? selected : 'all',
+    results: ordered.map((k) => ctx.results[k]),
+  };
+  await writeJson(resolve(smokeDir, 'summary.json'), summary);
+
+  const okCount = summary.results.filter((r) => r.status === 'ok').length;
+  const errCount = summary.results.filter((r) => r.status === 'error').length;
+  const skipCount = summary.results.filter((r) => r.status === 'skipped').length;
+  console.log(
+    `\nSummary: ${okCount} ok, ${errCount} error, ${skipCount} skipped.\n` +
+      `Artifacts: ${smokeDir}`,
+  );
+  process.exit(okCount > 0 ? 0 : 1);
+}
+
+main().catch((err) => {
+  console.error('Unhandled:', err);
+  process.exit(1);
+});

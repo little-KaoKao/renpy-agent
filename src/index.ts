@@ -173,6 +173,8 @@ export {
 } from './pipeline/coder.js';
 export { runQa, parseLintOutput } from './pipeline/qa.js';
 export { runPipeline, slugifyStoryName } from './pipeline/run-pipeline.js';
+export { rebuildGameProject } from './pipeline/rebuild.js';
+export type { RebuildOptions, RebuildResult } from './pipeline/rebuild.js';
 
 export {
   saveStoryWorkspace,

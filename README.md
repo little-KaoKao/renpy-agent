@@ -51,6 +51,45 @@ renpy-sdk/renpy.exe runtime/games/sakura-night/game
 
 ---
 
+## 修改已有 story
+
+一次 `generate` 之后,workspace JSON(`runtime/games/<story>/workspace/*.json`)里留了 planner / writer / storyboarder 的快照,可以在**不重跑 LLM** 的前提下改 3 类东西。`--rebuild` 附加动作是从 snapshot 直接重新渲染 `script.rpy` + 跑 QA lint:
+
+```powershell
+# 把某个角色的外观改成"短发"(AssetRegistry 中该角色立绘自动回落占位)
+node --env-file=.env dist/cli.js modify character sakura-night `
+    --name 白樱 --visual "short pink hair, twin braids" --rebuild
+
+# 把 Shot 3 的第 0 句改掉
+node --env-file=.env dist/cli.js modify dialogue sakura-night `
+    --shot 3 --line 0 --text "别这样看着我。" --rebuild
+
+# 重排镜头顺序(参数是原 shotNumber 的全排列)
+node --env-file=.env dist/cli.js modify shots sakura-night `
+    --order 3,1,2,4,5,6,7,8 --rebuild
+
+# 纯重渲染(不改 snapshot,比如手改了 workspace JSON 后重建)
+node --env-file=.env dist/cli.js rebuild sakura-night
+```
+
+## RunningHub 真 key smoke
+
+一次性体检 8 个 AppKey(MJ v7 / Nanobanana2 ×2 / Seedance ×2 / Qwen3 TTS ×2 / SunoV5),产物落在 `runtime/smoke/<timestamp>/`。必须先 `pnpm build`,脚本从 `dist/` 导入生产代码。
+
+```powershell
+pnpm build
+
+# 全跑 8 条(付费;脚本启动前有 3 秒确认窗口,Ctrl-C 可中止)
+node --env-file=.env scripts/runninghub-smoke.mjs
+
+# 只跑子集(依赖缺失会直接报错退出,不自动补齐)
+node --env-file=.env scripts/runninghub-smoke.mjs CHARACTER_MAIN_IMAGE SCENE_BACKGROUND
+```
+
+**依赖关系**:`CHARACTER_EXPRESSION` / `CUTSCENE_IMAGE_TO_VIDEO` 需要 `SCENE_BACKGROUND` 的产物作输入;`CHARACTER_DYNAMIC_SPRITE` 需要 `CHARACTER_MAIN_IMAGE`。退出码:至少一条 OK → 0,全失败 → 1。
+
+---
+
 ## 目录速查
 
 | 路径                         | 是什么                                                         |

@@ -330,7 +330,7 @@ async function plan() {
 - [ ] `renpy.input` 默认值里的中文标点 Ren'Py 8.x 兼容性
 - [ ] Planner 选型:沿用 HOGI 的 Gemini 2.5/3.0(依赖 thinking signature),还是切 Claude/GPT?暂定 Gemini。
 - [ ] RunningHub 各模型的**实测产出质量/单价/限流**:目前只定"用哪几个",首选/备选的取舍等真跑过再拍板。
-- [X] RunningHub OpenAPI 的真实 `webappId` 与输入节点 ID / fieldName:v0.5+ 已把 8 个 AppKey 的 `webappId` + `fields[]` 核对完成登记在 [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts)(真 key smoke test 仍是 TODO)。
+- [X] RunningHub OpenAPI 的真实 `webappId` 与输入节点 ID / fieldName:v0.5+ 已把 8 个 AppKey 的 `webappId` + `fields[]` 核对完成登记在 [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts);真 key smoke 脚本([scripts/runninghub-smoke.mjs](scripts/runninghub-smoke.mjs))也已覆盖全部 8 个 AppKey(见 v0.1 条目)。
 - [ ] 音频生成(BGM / SFX / 语音):v1 范围外。
 - [ ] galgame 标配 UI(存档点、多路线合流、CG 鉴赏、BGM 鉴赏):v2 范围。
 - [ ] 本仓库何时 `git init` + 首次 push 到 GitHub(当前还是本地工作区)。
@@ -350,7 +350,7 @@ async function plan() {
 - [X] [src/planner/index.ts](src/planner/index.ts) + [src/index.ts](src/index.ts) barrel
 - [X] `package.json` / `tsconfig.json` / `pnpm-lock.yaml`,`pnpm typecheck` + `pnpm build` 通过
 - [X] `README.md` + `.gitignore` + `.env.example` + `git init` + push 到 GitHub
-- [X] RunningHub 最小 smoke test(文生图握手)—— [scripts/runninghub-smoke.mjs](scripts/runninghub-smoke.mjs) 实测通路:真 key → `code=1 webapp not exists`(认证通过,卡参数),假 key → `code=301 user not exist`,认证 + JSON 通路均 OK。v0.5+ 协议已迁到 `/openapi/v2/run/ai-app/{webappId}` + `Authorization: Bearer`,`webappId` 也核对完成(smoke 脚本本身待升级)
+- [X] RunningHub 最小 smoke test(文生图握手)—— [scripts/runninghub-smoke.mjs](scripts/runninghub-smoke.mjs) 实测通路:真 key → `code=1 webapp not exists`(认证通过,卡参数),假 key → `code=301 user not exist`,认证 + JSON 通路均 OK。v0.5+ 协议已迁到 `/openapi/v2/run/ai-app/{webappId}` + `Authorization: Bearer`,smoke 脚本也已同步升级:复用 `dist/` 里的 `HttpRunningHubClient` + `RUNNINGHUB_APP_SCHEMAS` + `runImageTask`,覆盖全部 8 个 AppKey,支持位置参数选子集、依赖缺失报错退出、产物下载到 `runtime/smoke/<ts>/`
 
 ### v0.2 最小闭环(代码已落地,未跑过端到端真实 API)
 
@@ -403,7 +403,7 @@ async function plan() {
 - [X] 改对白 [modifyDialogueLine](src/pipeline/modify.ts):按 shotNumber + lineIndex 精确改一行,planner/writer 不动
 - [X] 重排镜头 [reorderShots](src/pipeline/modify.ts):传 shotNumber 全排列,输出 1-indexed 连续编号,planner/writer 不动
 - [X] 测试:workspace round-trip + 三个修改场景(含注册表回落 / 越界 / 非排列校验),共 +13 用例;全部基于 tmpdir,无需 LLM/HTTP
-- [ ] 三个修改场景接 CLI 子命令(`renpy-agent modify character …` 之类)—— 当前只有编程接口
+- [X] 三个修改场景接 CLI 子命令:`renpy-agent modify character/dialogue/shots <story> [--rebuild]` + `renpy-agent rebuild <story>`([src/cli.ts](src/cli.ts) + [src/pipeline/rebuild.ts](src/pipeline/rebuild.ts));`rebuild` 从 workspace snapshot 出发只跑 Coder + QA,不跑 LLM 三阶段或 AudioUiStage
 - [ ] 记忆压缩 + URI 懒加载实测长程 session(>2 小时)不崩 —— 需要真 Planner 上线后才做得了
 
 ### v0.5 员工扩招(音频 + UI 骨架)
