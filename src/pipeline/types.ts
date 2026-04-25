@@ -79,6 +79,13 @@ export interface TestRunResult {
   readonly warningMessage?: string;
 }
 
+export interface AudioUiPipelineStats {
+  readonly bgm: { readonly ok: number; readonly err: number };
+  readonly voice: { readonly ok: number; readonly err: number };
+  readonly sfx: { readonly ok: number; readonly err: number };
+  readonly ui: { readonly ok: number; readonly err: number };
+}
+
 export interface PipelineResult {
   readonly storyName: string;
   readonly gamePath: string;
@@ -86,4 +93,5 @@ export interface PipelineResult {
   readonly writer: WriterOutput;
   readonly storyboarder: StoryboarderOutput;
   readonly testRun: TestRunResult;
+  readonly audioUi?: AudioUiPipelineStats;
 }

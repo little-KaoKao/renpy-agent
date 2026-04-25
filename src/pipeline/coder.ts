@@ -2,8 +2,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import type { PlannerOutput, StoryboarderOutput } from './types.js';
-import type { AssetRegistryFile } from '../assets/registry.js';
+import type { AssetRegistryFile, AssetType } from '../assets/registry.js';
 import { findByLogicalKey } from '../assets/registry.js';
+import { mergeUiPatches, type UiPatch } from './ui-merge.js';
 
 const SCENE_PALETTE = [
   '#1a2540', // deep night blue
@@ -41,6 +42,8 @@ export interface GenerateGameParams {
   readonly planner: PlannerOutput;
   readonly storyboarder: StoryboarderOutput;
   readonly assetRegistry?: AssetRegistryFile;
+  /** UI Designer produced screen blocks; appended to screens.rpy by mergeUiPatches. */
+  readonly uiPatches?: ReadonlyArray<UiPatch>;
 }
 
 export async function generateGameProject(
@@ -55,7 +58,8 @@ export async function generateGameProject(
   const optionsRpy = optionsTpl
     .replaceAll('{{TITLE}}', params.planner.projectTitle)
     .replaceAll('{{BUILD_NAME}}', slugifyAscii(params.planner.projectTitle));
-  return { scriptRpy, optionsRpy, guiRpy: guiTpl, screensRpy: screensTpl };
+  const screensRpy = mergeUiPatches(screensTpl, params.uiPatches ?? []);
+  return { scriptRpy, optionsRpy, guiRpy: guiTpl, screensRpy };
 }
 
 export interface WriteGameFilesParams extends GenerateGameParams {
@@ -206,6 +210,11 @@ function renderMainLabel(
 ): string {
   const lines: string[] = ['label start:'];
   let activeScene: string | null = null;
+  // Track sceneNumber across non-cutscene shots so voice lines can be keyed by
+  // (sceneNumber, lineIndex) against the registry written by Voice Director.
+  // v0.5 convention: sceneNumber increments on each scene change (1-indexed),
+  // cutscenes reset activeScene (so the next scene-change re-triggers BGM too).
+  let sceneNumber = 0;
 
   for (const shot of storyboarder.shots) {
     lines.push('');
@@ -228,8 +237,15 @@ function renderMainLabel(
       }
       // Cutscene fully covers the stage; next non-cutscene shot must re-issue its scene.
       activeScene = null;
-      for (const line of shot.dialogueLines) {
-        lines.push(renderDialogueLine(line.speaker, line.text, charIdents));
+      for (let i = 0; i < shot.dialogueLines.length; i++) {
+        const line = shot.dialogueLines[i]!;
+        lines.push(
+          ...renderDialogueLineBlock(line.speaker, line.text, charIdents, {
+            sceneNumber,
+            lineIndex: i,
+            assetRegistry,
+          }),
+        );
       }
       continue;
     }
@@ -239,6 +255,23 @@ function renderMainLabel(
       const transition = transitionToken(shot.transition);
       lines.push(`    scene bg_${sceneIdent}${transition ? ` with ${transition}` : ''}`);
       activeScene = sceneIdent;
+      sceneNumber += 1;
+      // Opening a scene plays its BGM if the asset was generated; otherwise stay silent.
+      const bgm = lookupRealAsset(assetRegistry, 'bgm_track', logicalKeyForBgm(shot.sceneName));
+      if (bgm) {
+        lines.push(`    play music "${bgm}" fadeout 1.0`);
+      }
+    }
+
+    // SFX enter cue: plays before visuals resolve so it covers the transition.
+    // TODO(v0.6): handle action/ambient cues. Exit cue fires after dialogueLines below.
+    const sfxEnter = lookupRealAsset(
+      assetRegistry,
+      'sfx',
+      logicalKeyForSfx(shot.shotNumber, 'enter'),
+    );
+    if (sfxEnter) {
+      lines.push(`    play sound "${sfxEnter}"`);
     }
 
     if (mentions(shot.effects, 'sakura') || mentions(shot.effects, 'particle')) {
@@ -259,8 +292,24 @@ function renderMainLabel(
       lines.push('    show layer master at reset_layer');
     }
 
-    for (const line of shot.dialogueLines) {
-      lines.push(renderDialogueLine(line.speaker, line.text, charIdents));
+    for (let i = 0; i < shot.dialogueLines.length; i++) {
+      const line = shot.dialogueLines[i]!;
+      lines.push(
+        ...renderDialogueLineBlock(line.speaker, line.text, charIdents, {
+          sceneNumber,
+          lineIndex: i,
+          assetRegistry,
+        }),
+      );
+    }
+
+    const sfxExit = lookupRealAsset(
+      assetRegistry,
+      'sfx',
+      logicalKeyForSfx(shot.shotNumber, 'exit'),
+    );
+    if (sfxExit) {
+      lines.push(`    play sound "${sfxExit}"`);
     }
   }
 
@@ -271,6 +320,38 @@ function renderMainLabel(
   lines.push('    return');
 
   return lines.join('\n');
+}
+
+interface VoiceContext {
+  readonly sceneNumber: number;
+  readonly lineIndex: number;
+  readonly assetRegistry?: AssetRegistryFile;
+}
+
+/**
+ * Render a dialogue line, optionally prefixed by a `voice "..."` line when the
+ * registry has a ready voice_line asset. Ren'Py semantics: a `voice` statement
+ * is consumed by the next `say`, so they stay together as a 2-line block.
+ */
+function renderDialogueLineBlock(
+  speaker: string,
+  text: string,
+  charIdents: ReadonlyMap<string, string>,
+  ctx: VoiceContext,
+): string[] {
+  const out: string[] = [];
+  if (ctx.sceneNumber > 0) {
+    const voice = lookupRealAsset(
+      ctx.assetRegistry,
+      'voice_line',
+      logicalKeyForVoiceLine(ctx.sceneNumber, ctx.lineIndex),
+    );
+    if (voice) {
+      out.push(`    voice "${voice}"`);
+    }
+  }
+  out.push(renderDialogueLine(speaker, text, charIdents));
+  return out;
 }
 
 function renderDialogueLine(
@@ -352,9 +433,26 @@ export function logicalKeyForCutscene(shotNumber: number): string {
   return `cutscene:shot_${shotNumber}`;
 }
 
+// Mirrors the conventions from the audio/ui executers so Coder and executers
+// share one source of truth on how registry entries are keyed.
+export function logicalKeyForBgm(sceneName: string): string {
+  return `bgm:${slugToIdent(sceneName) || 'bgm'}`;
+}
+
+export function logicalKeyForVoiceLine(sceneNumber: number, lineIndex: number): string {
+  return `voice:scene_${sceneNumber}:line_${lineIndex}`;
+}
+
+export function logicalKeyForSfx(
+  shotNumber: number,
+  cue: 'enter' | 'action' | 'exit' | 'ambient',
+): string {
+  return `sfx:shot_${shotNumber}:${cue}`;
+}
+
 function lookupRealAsset(
   registry: AssetRegistryFile | undefined,
-  assetType: 'character_main' | 'scene_background' | 'cutscene',
+  assetType: AssetType,
   logicalKey: string,
 ): string | undefined {
   if (!registry) return undefined;
