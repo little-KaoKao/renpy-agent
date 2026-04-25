@@ -28,4 +28,15 @@ describe('parseArgs', () => {
     expect(parseArgs(['--help']).help).toBe(true);
     expect(parseArgs(['-h']).help).toBe(true);
   });
+
+  it('parses --audio-ui flag', () => {
+    const r = parseArgs(['--audio-ui', 'x', 'y']);
+    expect(r.audioUi).toBe(true);
+    expect(r.inspiration).toBe('x y');
+  });
+
+  it('leaves audioUi unset when flag missing', () => {
+    const r = parseArgs(['x', 'y']);
+    expect(r.audioUi).toBeUndefined();
+  });
 });

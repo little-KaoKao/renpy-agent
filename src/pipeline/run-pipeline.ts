@@ -1,12 +1,15 @@
 import { resolve } from 'node:path';
 import type { LlmClient } from '../llm/types.js';
+import type { RunningHubClient } from '../executers/common/runninghub-client.js';
+import { loadRegistry, registryPathForGame } from '../assets/registry.js';
 import { runPlanner } from './planner.js';
 import { runWriter } from './writer.js';
 import { runStoryboarder } from './storyboarder.js';
 import { writeGameProject } from './coder.js';
 import { runQa } from './qa.js';
 import type { PipelineResult } from './types.js';
-import { saveStoryWorkspace } from './workspace.js';
+import { saveAudioUiWorkspace, saveStoryWorkspace } from './workspace.js';
+import { runAudioUiStage, type AudioUiStageStats } from './audio-ui.js';
 
 export interface PipelineLogger {
   info(message: string): void;
@@ -24,6 +27,13 @@ export interface RunPipelineParams {
   readonly llm: LlmClient;
   readonly repoRoot?: string;
   readonly logger?: PipelineLogger;
+  /**
+   * v0.5: when true, run the minimal audio/UI generation stage between
+   * Storyboarder and Coder. Requires `runningHubClient` to be provided.
+   * Defaults to false (byte-identical to v0.4 behaviour).
+   */
+  readonly enableAudioUi?: boolean;
+  readonly runningHubClient?: RunningHubClient;
 }
 
 export async function runPipeline(params: RunPipelineParams): Promise<PipelineResult> {
@@ -43,8 +53,49 @@ export async function runPipeline(params: RunPipelineParams): Promise<PipelineRe
   const storyboarder = await runStoryboarder({ planner, writer, llm: params.llm });
   log.info(`[storyboarder] produced ${storyboarder.shots.length} shots`);
 
+  let audioUiStats: AudioUiStageStats | undefined;
+  let uiPatches: ReadonlyArray<{ readonly screen: string; readonly patch: string }> = [];
+  if (params.enableAudioUi) {
+    if (!params.runningHubClient) {
+      throw new Error(
+        'runPipeline: enableAudioUi=true requires runningHubClient. ' +
+          'Pass an HttpRunningHubClient (or mock) via RunPipelineParams.runningHubClient.',
+      );
+    }
+    log.info('[audio-ui] generating BGM / voice / SFX / UI...');
+    const registryPath = registryPathForGame(gameDir);
+    const stage = await runAudioUiStage({
+      planner,
+      writer,
+      storyboarder,
+      gameDir,
+      registryPath,
+      runningHubClient: params.runningHubClient,
+      llm: params.llm,
+      logger: log,
+    });
+    audioUiStats = stage.stats;
+    uiPatches = stage.uiPatches;
+    await saveAudioUiWorkspace(gameDir, {
+      bgm: stage.bgm,
+      voice: stage.voice,
+      sfx: stage.sfx,
+      ui: stage.ui,
+    });
+  }
+
   log.info(`[coder] generating .rpy into ${gameDir}...`);
-  await writeGameProject({ planner, storyboarder, gameDir });
+  // Reload the registry so Coder sees audio assets the stage just produced.
+  const assetRegistry = params.enableAudioUi
+    ? await loadRegistry(registryPathForGame(gameDir))
+    : undefined;
+  await writeGameProject({
+    planner,
+    storyboarder,
+    gameDir,
+    ...(assetRegistry !== undefined ? { assetRegistry } : {}),
+    ...(uiPatches.length > 0 ? { uiPatches } : {}),
+  });
   await saveStoryWorkspace(gameDir, { planner, writer, storyboarder });
   log.info('[coder] done (workspace snapshot saved)');
 
@@ -63,6 +114,7 @@ export async function runPipeline(params: RunPipelineParams): Promise<PipelineRe
     writer,
     storyboarder,
     testRun,
+    ...(audioUiStats !== undefined ? { audioUi: audioUiStats } : {}),
   };
 }
 

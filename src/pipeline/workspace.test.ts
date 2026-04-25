@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   loadStoryWorkspace,
+  saveAudioUiWorkspace,
   saveStoryWorkspace,
   workspacePathsForGame,
 } from './workspace.js';
@@ -68,5 +69,29 @@ describe('saveStoryWorkspace/loadStoryWorkspace', () => {
     expect(reloaded.planner).toEqual(PLANNER);
     expect(reloaded.writer).toEqual(WRITER);
     expect(reloaded.storyboarder).toEqual(STORYBOARDER);
+  });
+
+  it('saveAudioUiWorkspace writes only the groups supplied', async () => {
+    const gameDir = join(dir, 'game');
+    await saveStoryWorkspace(gameDir, {
+      planner: PLANNER,
+      writer: WRITER,
+      storyboarder: STORYBOARDER,
+    });
+    const paths = await saveAudioUiWorkspace(gameDir, {
+      bgm: { tracks: [{ sceneName: 's', trackName: 's', styleDescription: 'x' }] },
+      ui: {
+        patches: [
+          { screen: 'main_menu', moodTag: 'm', rpyScreenPatch: 'screen main_menu():\n    pass' },
+        ],
+      },
+    });
+    const bgmRaw = await readFile(paths.bgmPath, 'utf8');
+    expect(bgmRaw).toContain('"sceneName"');
+    const uiRaw = await readFile(paths.uiPath, 'utf8');
+    expect(uiRaw).toContain('"main_menu"');
+    // voice/sfx were not supplied → files should not be created.
+    await expect(readFile(paths.voicePath, 'utf8')).rejects.toBeDefined();
+    await expect(readFile(paths.sfxPath, 'utf8')).rejects.toBeDefined();
   });
 });
