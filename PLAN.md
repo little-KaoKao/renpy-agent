@@ -1,7 +1,9 @@
 # Agentic Galgame 项目计划
 
-> 最后更新:2026-04-25
-> 当前阶段:v0.2 minimal pipeline + v0.3a/b/c 骨架全部落地;Coder 支持 AssetRegistry 真资产绑定;角色/场景设计师/分镜师主干接通 RunningHub(协议已迁到 `/openapi/v2/run/ai-app/{webappId}` + `Authorization: Bearer`,8 个 AppKey 的 `webappId`/`fields[]` 全部登记真值);v0.4 修改闭环三个典型场景编程接口就位(story workspace 持久化 + modifyCharacterAppearance / modifyDialogueLine / reorderShots);v0.5 员工扩招骨架落地(音乐总监 / 配音导演 / 音效设计师 / UI 设计师 = 4 位 POC,BgmTrack/VoiceLine/Sfx/UiDesign 4 文档,RunningHub schema 8 个 AppKey 真值就绪:MJ v7 / Nanobanana2 / Seedance2.0 / Qwen3 TTS / SunoV5);v0.5 末尾补齐 Tier 1 扫尾:表情差分 / 道具 / 时段变体三个 executer + cutscene stage 自动路由 `shot.cutscene`(含 `--cutscene` CLI flag)+ modify e2e 冒烟(纯本地 mock,`scripts/modify-smoke.mjs` 通过)
+> 最后更新:2026-04-26
+> 当前阶段:**v0.6 V5 Planner/Executer 架构全部落地**(M1-M4 4 次 commit)—— `src/agents/` 新增顶层目录,11 位 POC 全部有 `tools.ts`,Planner 驱动 Executer 跑出 7-task Stage A 产物(scripted LLM e2e 测试已过,真 key smoke 待跑)。v0.2 串行 pipeline + v0.5 RunningHub 真资产链路一行未动、229 老测试全保留,双世界并存。Design spec:[docs/superpowers/specs/2026-04-25-v0.6-planner-executer-design.md](docs/superpowers/specs/2026-04-25-v0.6-planner-executer-design.md)
+>
+> 往前的基线:v0.2 minimal pipeline + v0.3a/b/c 资产闭环 + v0.4 修改闭环编程接口 + v0.5 音频/UI/cutscene 员工扩招(8 个 RunningHub AppKey 真值 + `--audio-ui` / `--cutscene` CLI)。
 
 ---
 
@@ -429,6 +431,26 @@ async function plan() {
 - [X] 启动验证:`renpy-sdk/renpy.exe runtime/games/smoke-audio-ui` 在 NVIDIA GL2 渲染器上稳定运行 20s+,无 traceback;3 条真 FLAC BGM 被 `play music` 引用,main_menu UI patch merge 到 screens.rpy
 - [X] logicalKey slug 统一:所有 `logicalKeyFor*` helper 集中到 [src/assets/logical-key.ts](src/assets/logical-key.ts),Coder 和 executers 共用 `slugForFilename`。之前 Coder 用 `slugToIdent`(fallback `'ch'`/`'scene'`/`'bgm'`),executers 用 `slugForFilename`(fallback `'asset'`),非 ASCII 角色/场景名(如 `"白樱"`)会让 Stage B 写入的 key 对不上 Coder 查询的 key,真资产默默走占位 —— 现在根治
 - [X] 清理 v0.1 scaffold 死代码:删除 [src/workflows/](src/workflows/)、[src/planner/](src/planner/)、[src/executers/common/types.ts](src/executers/common/types.ts) 以及 7 个空骨架 `index.ts`(producer/writer/coder/qa/character-designer/scene-designer/storyboarder 只 re-export 类型,无 runtime 引用);[src/index.ts](src/index.ts) barrel 同步收敛,移除重复的 `logicalKeyForCutsceneShot`(保留唯一 `logicalKeyForCutscene`)
+
+### v0.6 V5 Planner/Executer(已落地)
+
+Design:[docs/superpowers/specs/2026-04-25-v0.6-planner-executer-design.md](docs/superpowers/specs/2026-04-25-v0.6-planner-executer-design.md)
+
+- [X] **M1 LLM tool-use 底座** —— [src/llm/types.ts](src/llm/types.ts) 加 `LlmToolUseBlock` / `LlmToolResultBlock` / `LlmToolSchema` / `LlmStopReason` / `LlmToolChatParams` / `LlmToolChatResponse`;[src/llm/claude-client.ts](src/llm/claude-client.ts) 新增 `chatWithTools()`,老 `chat()` 一行不动。`LlmClient.chatWithTools?()` 可选方法,10 个老 consumer 零破坏
+- [X] **M2 workspace 基础设施** —— [src/agents/workspace-index.ts](src/agents/workspace-index.ts)(URI `workspace://<kind>[/<slug>]` 解析 + 扁平索引)、[src/agents/workspace-io.ts](src/agents/workspace-io.ts)(per-URI 读写)、[src/agents/memory.ts](src/agents/memory.ts)(`planner_memories/<story>/log.jsonl` append-only)、[src/agents/poc-registry.ts](src/agents/poc-registry.ts)(11 POC 身份元数据)、[src/agents/common-tools.ts](src/agents/common-tools.ts)(5 个真 common tool:`output_with_plan` / `output_with_finish` / `read_from_uri` / `handoff_to_agent` / `call_task_agent` + 3 个 workflow 三件套 stub)
+- [X] **M3 POC tool-set 包装** —— 11 位 POC 每人一份 `src/executers/<poc>/tools.ts`:Tier 1 真实现 11 个 tool(producer `create_project`+`create_chapter`;writer `draft_script`;storyboarder `condense_to_shots`;character_designer `create_or_update_character`;scene_designer `create_or_update_scene`;coder `write_game_project`;qa `run_qa`),Tier 2 stub 8 个(表情/动态立绘/prop/time_variant/cutscene/bgm/voice/sfx/ui/kick_back)。`generate_character_main_image` / `generate_scene_background` / `swap_asset_placeholder` 降级为 "hint tool" 或 stub,v0.7 修改链条真接入。[src/agents/tool-binder.ts](src/agents/tool-binder.ts) PocRole → PocToolSet 映射
+- [X] **M4 Planner/Executer 双层 loop** —— [src/agents/executer.ts](src/agents/executer.ts)(sub-conversation,POC tool-set + 5 common,LLM 统一 7-rule prompt);[src/agents/planner.ts](src/agents/planner.ts)(top-level,只 4 个 common tool,`handoff_to_agent` spawn Executer 子 conversation,Executer 的 `output_with_finish.taskSummary` 作为 Planner 那头 `handoff_to_agent` 的 `tool_result` —— 分层压缩核心);[src/agents/run-v5.ts](src/agents/run-v5.ts) 顶层 orchestrator;[src/cli.ts](src/cli.ts) `renpy-agent v5 [--story <slug>] <inspiration>` 子命令,`generate` / `modify` / `rebuild` 一行不动
+- [X] **测试闭环** —— 77 条新测试跨 12 个新 test file,全部 scripted LLM(无真 key);[src/agents/run-v5.test.ts](src/agents/run-v5.test.ts) 脚本化 7-task 端到端 happy path(producer → character_designer → scene_designer → writer → storyboarder → coder → qa),验证产物 `.rpy` + per-URI workspace docs + planner_memories JSONL 全部落盘;`pnpm test` 290 passed,`pnpm typecheck` + `pnpm build` 干净
+- [X] **Design spec 落盘** —— 6 section 完整(模块结构 / 5 common tool TS 签名 / POC tool-set Tier 1&2 / Planner+Executer loop + "改短发" trace / M1-M4 milestone / V5↔v1.0 关系 + 测试策略 + 风险)
+- [ ] **真 key smoke**(v0.7 接入前必须做一次):`node --env-file=.env dist/cli.js v5 "一个樱花树下的告白故事" --story smoke-v5` 跑通,产物落 `runtime/games/smoke-v5/game/`,`renpy-sdk/renpy.exe` 不崩。预期成本 ≈ $0.5-1(Sonnet 4.6 一次 7-task × 2-5 turn)
+- [ ] **workspace IO 双写适配**(v0.7 修改链条的前置)—— V5 写 per-URI,v0.4 `modify.ts` 读 3 份聚合 JSON,两套 IO 互不相通。过渡方案三选一:(A) V5 写完 per-URI 后 dump 一份聚合 JSON(双写,老 `modify.ts` 不改);(B) 老 `modify.ts` 重写为读 per-URI;(C) 修改链条直接走 V5,老 `modify.ts` deprecated。**待决策**(见 Design §6.3 裂缝 A)
+
+### v0.7 预览(不在 v0.6 范围)
+
+- [ ] 修改链条 Planner 驱动化:兑现 PLAN §8 "改短发" trace(Design §4.5)
+- [ ] Tier 2 POC tool 真实现(music / voice / sfx / ui / kick_back / cutscene / expression / dynamic_sprite / prop / time_variant)
+- [ ] workflow 三件套(`active_workflow` / `check_workflow_params` / `get_workflow_guide`)实现
+- [ ] 更多 task agent 进 `call_task_agent` 白名单
 
 ### v1.0
 
