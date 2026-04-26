@@ -278,4 +278,106 @@ describe('runAudioUiStage', () => {
     );
     expect(voiceOrSfxCalls).toHaveLength(0);
   });
+
+  it('runs BGM / Voice / SFX groups in parallel and registry entries survive the race', async () => {
+    // Three scenes × 3 lines each ⇒ 3 BGM + 3 voice tasks; shots carrying
+    // 'door' / 'wind' keywords produce 2 SFX cues. With the v0.7 per-entry
+    // registry, all three groups execute concurrently and each group
+    // parallelises internally under the concurrency cap.
+    const bigPlanner: PlannerOutput = {
+      ...PLANNER,
+      scenes: [
+        { name: 'garden', description: 'moonlit sakura garden' },
+        { name: 'corridor', description: 'empty school hallway' },
+        { name: 'rooftop', description: 'windy evening rooftop' },
+      ],
+    };
+    const bigBoard: StoryboarderOutput = {
+      shots: [
+        {
+          shotNumber: 1,
+          description: 'open with wind',
+          characters: ['Hana'],
+          sceneName: 'garden',
+          staging: 'enter',
+          transforms: 'stand',
+          transition: 'fade',
+          effects: 'gentle wind through branches',
+          dialogueLines: [
+            { speaker: 'Hana', text: 'A.' },
+            { speaker: 'Kai', text: 'B.' },
+          ],
+        },
+        {
+          shotNumber: 2,
+          description: 'door creaks',
+          characters: ['Kai'],
+          sceneName: 'corridor',
+          staging: 'enter',
+          transforms: 'stand',
+          transition: 'none',
+          effects: 'a door opens slowly',
+          dialogueLines: [{ speaker: 'Kai', text: 'C.' }],
+        },
+        {
+          shotNumber: 3,
+          description: 'no sfx',
+          characters: ['Hana'],
+          sceneName: 'rooftop',
+          staging: 'enter',
+          transforms: 'stand',
+          transition: 'none',
+          effects: 'petals drift',
+          dialogueLines: [{ speaker: 'Hana', text: 'D.' }],
+        },
+      ],
+    };
+
+    const submit = vi.fn(async (p: RunningHubSubmitParams) => ({
+      taskId: `${p.appKey}-${p.inputs.find((i) => i.role === 'title' || i.role === 'prompt')?.value ?? 'x'}`,
+    }));
+    // Track how many RunningHub tasks are in flight at once across *all* groups.
+    let inflight = 0;
+    let peak = 0;
+    const poll = vi.fn(async (taskId: string): Promise<RunningHubTaskResult> => {
+      inflight++;
+      peak = Math.max(peak, inflight);
+      await new Promise((r) => setTimeout(r, 8));
+      inflight--;
+      return { status: 'done', outputUri: `https://cdn/${taskId}.mp3` };
+    });
+    const client = { submitTask: submit, pollTask: poll, submit, poll } as any;
+
+    const llm = new ScriptedLlm(['screen main_menu():\n    tag menu']);
+    const result = await runAudioUiStage({
+      planner: bigPlanner,
+      writer: WRITER,
+      storyboarder: bigBoard,
+      gameDir,
+      registryPath,
+      runningHubClient: client,
+      llm,
+      pollIntervalMs: 0,
+      sleep: async () => {},
+      fetchFn: fakeFetch,
+      concurrency: 4,
+    });
+
+    expect(result.stats.bgm).toEqual({ ok: 3, err: 0 });
+    expect(result.stats.voice).toEqual({ ok: 4, err: 0 });
+    expect(result.stats.sfx).toEqual({ ok: 2, err: 0 });
+
+    // Groups are parallel, so peak inflight should exceed any single group's
+    // own item count — strongest signal that cross-group parallelism is on.
+    expect(peak).toBeGreaterThan(3);
+
+    // Every placeholderId lands in the registry under the new per-entry layout.
+    const { loadRegistry } = await import('../assets/registry.js');
+    const registry = await loadRegistry(registryPath);
+    const kinds = registry.entries.map((e) => e.assetType).sort();
+    expect(kinds.filter((k) => k === 'bgm_track')).toHaveLength(3);
+    expect(kinds.filter((k) => k === 'voice_line')).toHaveLength(4);
+    expect(kinds.filter((k) => k === 'sfx')).toHaveLength(2);
+    expect(registry.entries.every((e) => e.status === 'ready')).toBe(true);
+  });
 });

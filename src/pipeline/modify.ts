@@ -18,8 +18,8 @@
 import { readFile } from 'node:fs/promises';
 import {
   loadRegistry,
-  saveRegistry,
   upsertEntry,
+  upsertRegistryEntry,
   findByLogicalKey,
   registryPathForGame,
   type AssetRegistryEntry,
@@ -253,8 +253,8 @@ export async function modifyCharacterAppearance(
       status: 'placeholder',
       updatedAt: now().toISOString(),
     };
+    await upsertRegistryEntry(registryPath, invalidated);
     const nextRegistry = upsertEntry(registry, invalidated);
-    await saveRegistry(registryPath, nextRegistry);
     return { snapshot: nextSnapshot, registryChanged: true, registry: nextRegistry };
   }
   return { snapshot: nextSnapshot, registryChanged: false };

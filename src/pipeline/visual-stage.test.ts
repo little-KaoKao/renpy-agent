@@ -139,4 +139,57 @@ describe('runVisualStage', () => {
     });
     expect(client.submit).not.toHaveBeenCalled();
   });
+
+  it('runs character and scene batches in parallel and every entry lands in the registry', async () => {
+    const manyPlanner: PlannerOutput = {
+      ...PLANNER,
+      characters: Array.from({ length: 4 }, (_, i) => ({
+        name: `Char${i}`,
+        description: 'x',
+        visualDescription: 'x',
+      })),
+      scenes: Array.from({ length: 4 }, (_, i) => ({ name: `scene_${i}`, description: 'd' })),
+    };
+    const submit = vi.fn(async (p: RunningHubSubmitParams) => ({
+      taskId: `${p.appKey}-${p.inputs.find((i) => i.role === 'prompt' || i.role === 'title')?.value ?? 'x'}`,
+    }));
+    let inflight = 0;
+    let peak = 0;
+    const poll = vi.fn(async (taskId: string): Promise<RunningHubTaskResult> => {
+      inflight++;
+      peak = Math.max(peak, inflight);
+      await new Promise((r) => setTimeout(r, 8));
+      inflight--;
+      return { status: 'done', outputUri: `https://cdn/${taskId}.png` };
+    });
+    const client = { submitTask: submit, pollTask: poll, submit, poll } as any;
+
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = fakeFetch;
+    try {
+      const result = await runVisualStage({
+        planner: manyPlanner,
+        gameDir,
+        registryPath,
+        runningHubClient: client,
+        pollIntervalMs: 0,
+        sleep: async () => {},
+        concurrency: 4,
+      });
+      expect(result.stats.character).toEqual({ ok: 4, err: 0 });
+      expect(result.stats.scene).toEqual({ ok: 4, err: 0 });
+      // With character + scene batches both running in parallel at cap 4, we
+      // should see more than 4 inflight tasks across both groups.
+      expect(peak).toBeGreaterThan(4);
+
+      const registry = await loadRegistry(registryPath);
+      const characterEntries = registry.entries.filter((e) => e.assetType === 'character_main');
+      const sceneEntries = registry.entries.filter((e) => e.assetType === 'scene_background');
+      expect(characterEntries).toHaveLength(4);
+      expect(sceneEntries).toHaveLength(4);
+      expect(registry.entries.every((e) => e.status === 'ready')).toBe(true);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
 });

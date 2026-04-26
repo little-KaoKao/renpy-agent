@@ -1,8 +1,9 @@
 // Visual stage:在 Storyboarder 之后、Coder 之前,给每位角色生成立绘主图,
 // 给每个场景生成背景图。失败单条降级成 Stage A Solid() 占位,不阻塞后续。
 //
-// 和 audio-ui 类似,registry-writing 批次(角色 + 场景)串行跑,避免并发写同一
-// asset-registry.json 冲突。角色和场景之间串行即可,没有跨批次依赖。
+// 并发(v0.7):registry 改成 per-entry 文件 + 原子 rename upsert 后,角色和场景批次
+// 可以整体并行(Promise.all),每组内部用 `mapWithConcurrency` 限流到 4,避免一次把
+// RunningHub 的并发打满。
 //
 // 产物去向:
 //   - 立绘: images/char/<slug>.<ext>,logicalKey = character:<slug>:main
@@ -14,6 +15,7 @@ import type { FetchLike } from '../assets/download.js';
 import type { PlannerOutput } from './types.js';
 import { generateCharacterMainImage } from '../executers/character-designer/generate-main-image.js';
 import { generateSceneBackground } from '../executers/scene-designer/generate-background.js';
+import { mapWithConcurrency, resolveAssetConcurrency } from '../assets/concurrency.js';
 
 export interface VisualStageStats {
   readonly character: { readonly ok: number; readonly err: number };
@@ -39,6 +41,8 @@ export interface RunVisualStageParams {
   readonly pollIntervalMs?: number;
   readonly timeoutMs?: number;
   readonly fetchFn?: FetchLike;
+  /** Max inflight RunningHub calls per batch. Defaults to env / 4. */
+  readonly concurrency?: number;
 }
 
 const silentLogger: VisualStageLogger = { info: () => {}, error: () => {} };
@@ -51,8 +55,10 @@ export async function runVisualStage(
     `[visual] plan: characters=${params.planner.characters.length} scenes=${params.planner.scenes.length}`,
   );
 
-  const character = await runCharacterBatch(params, log);
-  const scene = await runSceneBatch(params, log);
+  const [character, scene] = await Promise.all([
+    runCharacterBatch(params, log),
+    runSceneBatch(params, log),
+  ]);
 
   const stats: VisualStageStats = { character, scene };
   log.info(
@@ -66,9 +72,10 @@ async function runCharacterBatch(
   params: RunVisualStageParams,
   log: VisualStageLogger,
 ): Promise<{ ok: number; err: number }> {
+  const limit = resolveAssetConcurrency(params.concurrency);
   let ok = 0;
   let err = 0;
-  for (const c of params.planner.characters) {
+  await mapWithConcurrency(params.planner.characters, limit, async (c) => {
     try {
       await generateCharacterMainImage({
         characterName: c.name,
@@ -86,7 +93,7 @@ async function runCharacterBatch(
       err++;
       log.error(`[visual] character "${c.name}" failed: ${asMessage(e)}`);
     }
-  }
+  });
   return { ok, err };
 }
 
@@ -94,9 +101,10 @@ async function runSceneBatch(
   params: RunVisualStageParams,
   log: VisualStageLogger,
 ): Promise<{ ok: number; err: number }> {
+  const limit = resolveAssetConcurrency(params.concurrency);
   let ok = 0;
   let err = 0;
-  for (const s of params.planner.scenes) {
+  await mapWithConcurrency(params.planner.scenes, limit, async (s) => {
     try {
       await generateSceneBackground({
         sceneName: s.name,
@@ -114,7 +122,7 @@ async function runSceneBatch(
       err++;
       log.error(`[visual] scene "${s.name}" failed: ${asMessage(e)}`);
     }
-  }
+  });
   return { ok, err };
 }
 
