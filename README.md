@@ -1,5 +1,7 @@
 # Ren'Py Agent
 
+[![CI](https://github.com/little-KaoKao/renpy-agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/little-KaoKao/renpy-agent/actions/workflows/ci.yml)
+
 从一段灵感(文字 / 图)自动产出可玩 galgame 的 agent 流水线。
 
 **设计要点**见 [PLAN.md](PLAN.md)。这里只讲 clone 之后怎么跑起来。
@@ -9,7 +11,7 @@
 ## 你会得到什么
 
 - 本仓库 = **agent 系统源码**(Planner + 7 位 POC executer + schema + workflows)
-- Ren'Py SDK **不在仓库里**,由 [scripts/setup-renpy.ps1](scripts/setup-renpy.ps1) 按 [.renpy-version](.renpy-version) 自动下载
+- Ren'Py SDK **不在仓库里**,按 [.renpy-version](.renpy-version) 自动下载 —— Windows 用 [scripts/setup-renpy.ps1](scripts/setup-renpy.ps1),macOS/Linux 用 [scripts/setup-renpy.sh](scripts/setup-renpy.sh)
 - 游戏工程是**运行时产物**,生成到 `runtime/games/<story-name>/`,不入 git
 
 ---
@@ -48,6 +50,41 @@ renpy-sdk/renpy.exe runtime/games/sakura-night/game
 ### 升 Ren'Py 版本
 
 改 [.renpy-version](.renpy-version) 的版本号 → 重跑 `pwsh scripts/setup-renpy.ps1` → junction 自动指到新 SDK,其他代码不动。
+
+---
+
+## Quickstart(macOS / Linux)
+
+前置:bash、curl 或 wget、tar、Node.js 20+、pnpm、~1GB 磁盘。
+
+```bash
+# 1. 克隆
+git clone https://github.com/little-KaoKao/renpy-agent.git
+cd renpy-agent
+
+# 2. 自动拉 Ren'Py SDK(~500MB,脚本幂等;下载 .tar.bz2 + 解压 + 建 symlink)
+bash scripts/setup-renpy.sh
+
+# 3. 装依赖 + 配 key
+pnpm install
+cp .env.example .env
+#    用编辑器打开 .env 填入 AWS Bedrock 三件套(CLAUDE_CODE_USE_BEDROCK=1 /
+#    AWS_REGION / AWS_BEARER_TOKEN_BEDROCK)和 RUNNINGHUB_API_KEY
+
+# 4. 验证环境:跑手工 demo,应当出现 8 镜头占位画面
+renpy-sdk/renpy.sh docs/examples/baiying-demo
+
+# 5. 构建 agent 代码
+pnpm build
+
+# 6. 喂一段灵感,产出在 runtime/games/<story-name>/game/
+node --env-file=.env dist/cli.js --name sakura-night "一个关于樱花树下告白的故事"
+
+# 7. 玩 agent 产物
+renpy-sdk/renpy.sh runtime/games/sakura-night/game
+```
+
+强制重下 SDK:`bash scripts/setup-renpy.sh --force`。升级版本改 `.renpy-version` 后重跑脚本,symlink 自动指到新 SDK。
 
 ---
 
