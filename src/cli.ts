@@ -15,6 +15,7 @@ import {
 } from './pipeline/modify.js';
 import { rebuildGameProject } from './pipeline/rebuild.js';
 import { runV5 } from './agents/run-v5.js';
+import { createFileLogger, logsDirForGame, type FileLogger } from './pipeline/logger.js';
 
 export type ParsedCliCommand =
   | {
@@ -341,11 +342,13 @@ async function runGenerate(cmd: GenerateCommand): Promise<number> {
     });
   }
 
+  const logger = createFileLogger(logsDirForGame(gameDirFor(storyName)));
   try {
     const result = await runPipeline({
       inspiration: cmd.inspiration,
       storyName,
       llm,
+      logger,
       enableAudioUi,
       enableCutscene,
       enableVisual,
@@ -380,6 +383,8 @@ async function runGenerate(cmd: GenerateCommand): Promise<number> {
   } catch (err) {
     console.error(`\n❌ Pipeline failed: ${String((err as Error).message)}`);
     return 1;
+  } finally {
+    await logger.flush();
   }
 }
 
@@ -442,12 +447,14 @@ async function runV5Command(cmd: V5Command): Promise<number> {
   const storyName = slugifyStoryName(cmd.storyName);
   const llm = new ClaudeLlmClient();
   const gameDir = gameDirFor(storyName);
+  const logger: FileLogger = createFileLogger(logsDirForGame(gameDir));
   try {
     const result = await runV5({
       storyName,
       inspiration: cmd.inspiration,
       llm,
       gameDir,
+      logger,
     });
     console.log(`\n✅ V5 run complete. Game at: ${result.gameDir}`);
     console.log(`   Planner tasks: ${result.plannerTaskCount}`);
@@ -457,6 +464,8 @@ async function runV5Command(cmd: V5Command): Promise<number> {
   } catch (err) {
     console.error(`\n❌ V5 run failed: ${String((err as Error).message)}`);
     return 1;
+  } finally {
+    await logger.flush();
   }
 }
 
