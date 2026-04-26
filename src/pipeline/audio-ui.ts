@@ -12,9 +12,10 @@
 // 失败策略:单条资产失败不整体失败,executer 已 markAssetError,Coder 查 registry
 // 时视为未命中走占位;stage 只汇总 ok/err 数,日志透出。
 //
-// 并发:BGM / Voice / SFX 三组都写同一个 `asset-registry.json`,load→compute→save
-// 不是原子的,所以它们串行执行(组间排队、组内再串行),避免并发写时互相覆盖
-// 彼此的 entry。UI 批不触碰 registry,可以和 RunningHub 组并发。
+// 并发(v0.7):registry 改成 per-entry 文件 + 原子 rename upsert 后,不同
+// placeholderId 的写入互不冲突,所以 BGM / Voice / SFX 三组可以整体 Promise.all,
+// 组内也用 `mapWithConcurrency` 限流到 4(可 env override),避免一次打爆
+// RunningHub 限流。UI 批不触碰 registry,也并行。
 
 import type { LlmClient } from '../llm/types.js';
 import type { RunningHubClient } from '../executers/common/runninghub-client.js';
@@ -28,6 +29,7 @@ import { generateBgmTrack } from '../executers/music-director/generate-bgm-track
 import { generateVoiceLine } from '../executers/voice-director/generate-voice-line.js';
 import { generateSfx, type SfxCue } from '../executers/sfx-designer/generate-sfx.js';
 import { generateUiPatch } from '../executers/ui-designer/generate-ui-patch.js';
+import { mapWithConcurrency, resolveAssetConcurrency } from '../assets/concurrency.js';
 import type {
   BgmSnapshot,
   SfxSnapshot,
@@ -71,6 +73,12 @@ export interface RunAudioUiStageParams {
   readonly pollIntervalMs?: number;
   /** Override the fetch used by asset downloads (tests, proxies). */
   readonly fetchFn?: FetchLike;
+  /**
+   * Max in-flight generators per sub-batch (bgm / voice / sfx). Defaults to
+   * `RENPY_AGENT_ASSET_CONCURRENCY` env var, else 4. Kept small to respect
+   * RunningHub rate limits.
+   */
+  readonly concurrency?: number;
 }
 
 // Qwen3 TTS 的 voice_text 是「创意提示」,不是 TTS 音色参数 —— 模型会基于它
@@ -96,19 +104,16 @@ export async function runAudioUiStage(
       `sfx=${sfxPlan.length} ui=${uiPlan.length}`,
   );
 
-  // UI batch does not share registry state with the RunningHub batches, so it
-  // can run concurrently with them. The three registry-writing batches must
-  // run sequentially to avoid racing on `asset-registry.json`.
-  const [registryBatches, uiResult] = await Promise.all([
-    (async () => {
-      const bgm = await runBgmBatch(bgmPlan, params, log);
-      const voice = await runVoiceBatch(voicePlan, params, log);
-      const sfx = await runSfxBatch(sfxPlan, params, log);
-      return { bgm, voice, sfx };
-    })(),
+  // Since v0.7 the registry is per-entry files with atomic rename upsert, so
+  // BGM / Voice / SFX groups no longer collide on a shared JSON and can run
+  // fully in parallel alongside the UI batch. Each group internally uses
+  // `mapWithConcurrency` to cap RunningHub fan-out.
+  const [bgmResult, voiceResult, sfxResult, uiResult] = await Promise.all([
+    runBgmBatch(bgmPlan, params, log),
+    runVoiceBatch(voicePlan, params, log),
+    runSfxBatch(sfxPlan, params, log),
     runUiBatch(uiPlan, params, log),
   ]);
-  const { bgm: bgmResult, voice: voiceResult, sfx: sfxResult } = registryBatches;
 
   const stats: AudioUiStageStats = {
     bgm: bgmResult.stats,
@@ -211,7 +216,7 @@ function planUiPatches(planner: PlannerOutput, moodTag?: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Batch runners — each group runs sequentially internally.
+// Batch runners — each group runs with bounded concurrency internally.
 // ---------------------------------------------------------------------------
 
 async function runBgmBatch(
@@ -219,9 +224,10 @@ async function runBgmBatch(
   params: RunAudioUiStageParams,
   log: AudioUiStageLogger,
 ) {
+  const limit = resolveAssetConcurrency(params.concurrency);
   let ok = 0;
   let err = 0;
-  for (const item of plan) {
+  await mapWithConcurrency(plan, limit, async (item) => {
     try {
       await generateBgmTrack({
         trackName: item.trackName,
@@ -238,7 +244,7 @@ async function runBgmBatch(
       err++;
       log.error(`[audio-ui] bgm failed for "${item.trackName}": ${asMessage(e)}`);
     }
-  }
+  });
   return { stats: { ok, err } };
 }
 
@@ -253,9 +259,10 @@ async function runVoiceBatch(
   params: RunAudioUiStageParams,
   log: AudioUiStageLogger,
 ) {
+  const limit = resolveAssetConcurrency(params.concurrency);
   let ok = 0;
   let err = 0;
-  for (const item of plan) {
+  await mapWithConcurrency(plan, limit, async (item) => {
     try {
       await generateVoiceLine({
         shotNumber: item.shotNumber,
@@ -276,7 +283,7 @@ async function runVoiceBatch(
         `[audio-ui] voice failed for shot_${item.shotNumber}:line_${item.lineIndex}: ${asMessage(e)}`,
       );
     }
-  }
+  });
   return { stats: { ok, err } };
 }
 
@@ -285,9 +292,10 @@ async function runSfxBatch(
   params: RunAudioUiStageParams,
   log: AudioUiStageLogger,
 ) {
+  const limit = resolveAssetConcurrency(params.concurrency);
   let ok = 0;
   let err = 0;
-  for (const item of plan) {
+  await mapWithConcurrency(plan, limit, async (item) => {
     try {
       await generateSfx({
         shotNumber: item.shotNumber,
@@ -305,7 +313,7 @@ async function runSfxBatch(
       err++;
       log.error(`[audio-ui] sfx failed for shot_${item.shotNumber}:${item.cue}: ${asMessage(e)}`);
     }
-  }
+  });
   return { stats: { ok, err } };
 }
 
@@ -318,10 +326,11 @@ async function runUiBatch(
   params: RunAudioUiStageParams,
   log: AudioUiStageLogger,
 ) {
+  const limit = resolveAssetConcurrency(params.concurrency);
   let ok = 0;
   let err = 0;
   const patches: Array<{ screen: string; moodTag: string; rpyScreenPatch: string }> = [];
-  for (const item of plan) {
+  await mapWithConcurrency(plan, limit, async (item) => {
     try {
       const result = await generateUiPatch({
         screen: item.screen,
@@ -339,7 +348,7 @@ async function runUiBatch(
       err++;
       log.error(`[audio-ui] ui patch failed for ${item.screen}: ${asMessage(e)}`);
     }
-  }
+  });
   return { stats: { ok, err }, patches };
 }
 
