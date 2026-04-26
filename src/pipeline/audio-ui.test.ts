@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { LlmChatParams, LlmClient, LlmResponse } from '../llm/types.js';
+import type {
+  LlmChatParams,
+  LlmClient,
+  LlmResponse,
+  LlmToolChatParams,
+  LlmToolChatResponse,
+} from '../llm/types.js';
 import type {
   RunningHubClient,
   RunningHubSubmitParams,
@@ -72,15 +78,42 @@ const STORYBOARDER: StoryboarderOutput = {
   ],
 };
 
+/**
+ * UI designer is the only LLM call-site in audio-ui; it uses chatWithTools with
+ * `emit_ui_design`. The queue carries the headerText each UI call should produce.
+ */
 class ScriptedLlm implements LlmClient {
-  public readonly calls: LlmChatParams[] = [];
+  public readonly calls: LlmToolChatParams[] = [];
   private readonly queue: string[];
   constructor(queue: string[]) { this.queue = [...queue]; }
-  async chat(params: LlmChatParams): Promise<LlmResponse> {
+
+  async chat(_p: LlmChatParams): Promise<LlmResponse> {
+    throw new Error('audio-ui ScriptedLlm.chat() no longer used; UI designer uses chatWithTools');
+  }
+
+  async chatWithTools(params: LlmToolChatParams): Promise<LlmToolChatResponse> {
     this.calls.push(params);
-    const next = this.queue.shift();
-    if (next === undefined) throw new Error('ScriptedLlm exhausted');
-    return { content: next, usage: { inputTokens: 0, outputTokens: 0 } };
+    const headerText = this.queue.shift();
+    if (headerText === undefined) throw new Error('ScriptedLlm exhausted');
+    return {
+      content: [
+        {
+          type: 'tool_use',
+          id: `tu_${this.calls.length}`,
+          name: 'emit_ui_design',
+          input: {
+            headerText,
+            buttons: [
+              { label: 'Start', action: 'Start()' },
+              { label: 'Quit', action: 'Quit(confirm=False)' },
+            ],
+            bgColor: '#ffe7f0',
+          },
+        },
+      ],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
   }
 }
 
@@ -128,9 +161,7 @@ describe('runAudioUiStage', () => {
   });
 
   it('plans BGM per scene, voice for non-narrator lines, SFX only for keyword matches, and one UI patch', async () => {
-    const llm = new ScriptedLlm([
-      'screen main_menu():\n    tag menu\n    add Solid("#eee")',
-    ]);
+    const llm = new ScriptedLlm(['Sakura Night']);
     const client = makeRunningHub();
     const result = await runAudioUiStage({
       planner: PLANNER,
@@ -171,9 +202,7 @@ describe('runAudioUiStage', () => {
   });
 
   it('tolerates a single failing group without collapsing the stage', async () => {
-    const llm = new ScriptedLlm([
-      'screen main_menu():\n    tag menu\n    add Solid("#eee")',
-    ]);
+    const llm = new ScriptedLlm(['Sakura Night']);
     const client = makeRunningHub({ voiceFail: true });
     const errorLog: string[] = [];
     const result = await runAudioUiStage({
@@ -198,7 +227,7 @@ describe('runAudioUiStage', () => {
   });
 
   it('respects a 5-line voice budget even when the storyboard has more shots/lines', async () => {
-    const llm = new ScriptedLlm(['screen main_menu():\n    tag menu']);
+    const llm = new ScriptedLlm(['Sakura Night']);
     const longBoard: StoryboarderOutput = {
       shots: Array.from({ length: 4 }, (_, i) => ({
         shotNumber: i + 1,
@@ -236,7 +265,7 @@ describe('runAudioUiStage', () => {
   });
 
   it('produces empty voice/sfx plans without calling RunningHub when there is nothing to do', async () => {
-    const llm = new ScriptedLlm(['screen main_menu():\n    tag menu']);
+    const llm = new ScriptedLlm(['Sakura Night']);
     const emptyWriter: WriterOutput = {
       scenes: [{ location: 'garden', characters: [], lines: [] }],
     };

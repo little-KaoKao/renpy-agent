@@ -1,61 +1,75 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import type { LlmClient } from '../llm/types.js';
-import { extractJsonBlock } from '../llm/claude-client.js';
-import { retryJsonParse } from '../llm/retry.js';
+import type { LlmClient, LlmToolUseBlock } from '../llm/types.js';
+import { retryOnStageValidationError } from '../llm/retry.js';
 import { wrapParseError } from '../llm/stage-parse-error.js';
-import { repairCjkInnerQuotes } from '../llm/json-repair.js';
 import type { PlannerOutput } from './types.js';
 
 const PLANNER_SYSTEM_TEMPLATE = `You are the Planner for a galgame production pipeline.
 You are given a user-supplied INSPIRATION (a sentence, paragraph, or outline).
-Read the TypeScript schema below and produce a PlannerOutput JSON object that will seed
-a single-chapter Stage-A playable demo (up to ~8 shots).
+Read the TypeScript schema below and decide the PlannerOutput that will seed a
+single-chapter Stage-A playable demo (up to ~8 shots).
 
 SCHEMA (galgame-workspace.ts):
 \`\`\`typescript
 {{SCHEMA}}
 \`\`\`
 
-Return ONLY a JSON object inside a \`\`\`json fence, matching this TypeScript shape:
-\`\`\`typescript
-interface PlannerOutput {
-  projectTitle: string;      // A short title (<= 20 chars)
-  genre: string;              // e.g. "romance", "mystery"
-  tone: string;               // e.g. "tender", "melancholic"
-  characters: Array<{         // 1-3 characters max for a Stage-A demo
-    name: string;
-    description: string;      // personality / role in one sentence
-    visualDescription: string;// hair, eye color, outfit, ~2 sentences
-  }>;
-  scenes: Array<{             // 1-3 locations
-    name: string;             // e.g. "sakura_night"
-    description: string;      // what the place looks/feels like
-  }>;
-  chapterOutline: string;     // one paragraph describing the single chapter's arc
-}
-\`\`\`
-No prose outside the fence.
+Call the tool \`emit_planner_output\` exactly once with a structured PlannerOutput.
+Do NOT emit prose, do NOT emit JSON text — only the tool call.`;
 
-CRITICAL JSON HYGIENE:
-- If you need to put a quoted phrase INSIDE a string value, use Chinese full-width
-  quotes 「」 or 『』 or backslash-escape them (\\"...\\"). Do NOT use raw ASCII
-  double quotes \`"..."\` inside a string — the JSON parser will treat the inner
-  \`"\` as the end of the string and reject the whole response.
-  Bad:  "description": "她轻声说"我爱你",然后..."
-  Good: "description": "她轻声说「我爱你」,然后..."
-  Good: "description": "她轻声说\\"我爱你\\",然后..."
-- Same rule for chapterOutline and all other string values.`;
+const PLANNER_TOOL_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    projectTitle: { type: 'string', description: 'Short title, <= 20 chars' },
+    genre: { type: 'string', description: 'e.g. romance, mystery' },
+    tone: { type: 'string', description: 'e.g. tender, melancholic' },
+    characters: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 3,
+      description: '1-3 characters for a Stage-A demo',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          description: { type: 'string', description: 'personality / role in one sentence' },
+          visualDescription: {
+            type: 'string',
+            description: 'hair, eye color, outfit, ~2 sentences',
+          },
+        },
+        required: ['name', 'description', 'visualDescription'],
+      },
+    },
+    scenes: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 3,
+      description: '1-3 locations',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'e.g. sakura_night' },
+          description: { type: 'string', description: 'what the place looks/feels like' },
+        },
+        required: ['name', 'description'],
+      },
+    },
+    chapterOutline: {
+      type: 'string',
+      description: "one paragraph describing the single chapter's arc",
+    },
+  },
+  required: ['projectTitle', 'genre', 'tone', 'characters', 'scenes', 'chapterOutline'],
+} as const;
 
 let cachedSchema: string | null = null;
 
 async function loadSchema(): Promise<string> {
   if (cachedSchema !== null) return cachedSchema;
   const here = dirname(fileURLToPath(import.meta.url));
-  // When running from source (src/pipeline/planner.ts), this resolves to
-  // src/schema/galgame-workspace.ts. When running from dist/pipeline/planner.js,
-  // copy-templates.mjs mirrors the schema to dist/schema/galgame-workspace.ts.
   const schemaPath = resolve(here, '../schema/galgame-workspace.ts');
   cachedSchema = await readFile(schemaPath, 'utf8');
   return cachedSchema;
@@ -69,42 +83,61 @@ export interface RunPlannerParams {
 export async function runPlanner(params: RunPlannerParams): Promise<PlannerOutput> {
   const schema = await loadSchema();
   const system = PLANNER_SYSTEM_TEMPLATE.replace('{{SCHEMA}}', schema);
+  if (!params.llm.chatWithTools) {
+    throw new Error('runPlanner requires an LlmClient that supports chatWithTools.');
+  }
 
-  return retryJsonParse({
+  return retryOnStageValidationError({
     attempt: async () => {
-      const res = await params.llm.chat({
+      const res = await params.llm.chatWithTools!({
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: `INSPIRATION:\n${params.inspiration}` },
         ],
+        tools: [
+          {
+            name: 'emit_planner_output',
+            description:
+              'Emit the PlannerOutput as a single structured tool call. ' +
+              'All fields are required.',
+            inputSchema: PLANNER_TOOL_INPUT_SCHEMA as unknown as Record<string, unknown>,
+          },
+        ],
         temperature: 0.7,
         maxTokens: 4096,
       });
+
       try {
-        const json = extractJsonBlock(res.content);
-        const parsed = tryParseWithRepair<PlannerOutput>(json);
+        const parsed = extractToolInput(res.content, 'emit_planner_output');
         assertPlannerOutput(parsed);
         return parsed;
       } catch (e) {
-        throw wrapParseError(e, res.content);
+        throw wrapParseError(e, describeContent(res.content));
       }
     },
     onRetry: (err, attempt) => {
-      console.warn(`[planner] attempt ${attempt} produced invalid output (${err.message}); retrying...`);
+      console.warn(
+        `[planner] attempt ${attempt} produced invalid output (${err.message}); retrying...`,
+      );
     },
   });
 }
 
-function tryParseWithRepair<T>(json: string): T {
-  try {
-    return JSON.parse(json) as T;
-  } catch (firstErr) {
-    const repaired = repairCjkInnerQuotes(json);
-    if (repaired !== json) {
-      return JSON.parse(repaired) as T;
-    }
-    throw firstErr;
+function extractToolInput(
+  content: ReadonlyArray<{ type: string }>,
+  toolName: string,
+): unknown {
+  const toolUse = content.find(
+    (b): b is LlmToolUseBlock => b.type === 'tool_use' && (b as LlmToolUseBlock).name === toolName,
+  );
+  if (!toolUse) {
+    throw new Error(`LLM did not call tool ${toolName}`);
   }
+  return toolUse.input;
+}
+
+function describeContent(content: ReadonlyArray<{ type: string }>): string {
+  return JSON.stringify(content);
 }
 
 function assertPlannerOutput(value: unknown): asserts value is PlannerOutput {

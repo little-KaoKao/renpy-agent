@@ -1,13 +1,32 @@
 // UI 设计师:screens.rpy 补丁生成入口。
 //
+// v0.7:LLM 不再直接输出 Ren'Py 代码字符串。它调 `emit_ui_design` tool 返回结构化
+// JSON(headerText / buttons / bgColor / layout),由纯 TS renderer 把 JSON 编译成
+// 合法 Ren'Py screen block。LLM 根本摸不到 `.rpy` 文本,也就不存在"意外写出
+// init python / import / font 覆盖"这种黑名单式的攻击面。
+//
 // 和其余 audio/image executer 不同,**不走 RunningHub**,不进 AssetRegistry —— 产物是
 // 一段合法的 Ren'Py screen block 字符串,Coder 在 merge 阶段直接追加到 screens.rpy 末尾,
 // 利用 Ren'Py "后定义 screen 覆盖先定义"的语义覆盖内置 screen。
-//
-// v0.5 范围内 UI 不生成图像资源,只产 screen 代码;按钮背景走默认 gui.rpy 风格。
 
-import type { LlmClient } from '../../llm/types.js';
+import type {
+  LlmClient,
+  LlmToolChatResponse,
+  LlmToolUseBlock,
+} from '../../llm/types.js';
 import type { UiDesign } from '../../schema/galgame-workspace.js';
+
+export interface UiPatchButton {
+  readonly label: string;
+  readonly action: string;
+}
+
+export interface UiPatchDesign {
+  readonly headerText: string;
+  readonly buttons: ReadonlyArray<UiPatchButton>;
+  readonly bgColor?: string;
+  readonly layout?: 'vbox' | 'hbox';
+}
 
 export interface GenerateUiPatchParams {
   readonly screen: UiDesign['screen'];
@@ -23,68 +42,199 @@ export interface GenerateUiPatchResult {
   readonly rpyScreenPatch: string;
 }
 
-const UI_PATCH_SYSTEM_PROMPT = `You are the UI Designer for a Ren'Py visual novel pipeline.
-You produce one Ren'Py screen block that overrides a built-in screen.
+const UI_PATCH_SYSTEM_PROMPT = `You are the UI Designer for a Ren'Py visual novel.
+You design ONE screen at a time. Call the tool \`emit_ui_design\` exactly once with a
+structured design (title header text, buttons, optional bg color, optional layout).
 
-Rules:
-1. Output MUST start with \`screen <screen>():\` (no markdown fence, no prose).
-2. First non-blank line must be a comment header: \`# --- ui-patch: <screen> (mood: <moodTag>) ---\`.
-3. NO \`init python\` blocks, NO \`init\` blocks, NO \`import\` statements, NO \`style\` overrides,
-   NO \`default\` statements.
-4. Stick to visible screen elements: \`frame\`, \`vbox\`, \`hbox\`, \`textbutton\`, \`text\`, \`add\`,
-   \`imagebutton\`. All colors via named colors or hex like \`"#rrggbb"\`.
-5. Do NOT reference external image files (image backgrounds) — Ren'Py's default gui.rpy assets are fine.
-6. Do NOT set a \`font "..."\` property on any text element. The project ships exactly one
-   font (SourceHanSansLite.ttf, wired through gui.text_font) and referencing any other font
-   file will crash at runtime. Just omit the font property — text elements inherit the default.
-7. Keep it self-contained and under ~40 lines.`;
+Do NOT write Ren'Py code. A downstream pure-TS renderer compiles your structured
+design into the actual screen block. You only choose content and mood.
 
-function buildUserPrompt(
-  screen: UiDesign['screen'],
-  moodTag: string,
-  projectTitle: string,
-): string {
-  return [
-    `Project title: ${projectTitle}`,
-    `Screen to override: ${screen}`,
-    `Visual mood: ${moodTag}`,
-    '',
-    `Produce the Ren'Py screen block. Remember: start with \`screen ${screen}():\`` +
-      ` on the first code line, preceded only by the ui-patch comment header.`,
-  ].join('\n');
-}
+Constraints:
+- Labels and button actions must be plain strings with no quotes, backslashes, or newlines.
+- bgColor, if set, must be a #rrggbb hex string.
+- Keep the button list short (2-5 items).`;
+
+const UI_PATCH_TOOL_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    headerText: {
+      type: 'string',
+      description: 'The large title text displayed on the screen (e.g. project title).',
+    },
+    layout: {
+      type: 'string',
+      enum: ['vbox', 'hbox'],
+      description: 'Stack direction for buttons. Defaults to vbox.',
+    },
+    bgColor: {
+      type: 'string',
+      description: 'Optional background color as #rrggbb hex.',
+    },
+    buttons: {
+      type: 'array',
+      minItems: 0,
+      maxItems: 6,
+      items: {
+        type: 'object',
+        properties: {
+          label: { type: 'string', description: 'Visible button label, plain text.' },
+          action: {
+            type: 'string',
+            description:
+              "Ren'Py action expression, e.g. Start() / ShowMenu(\"load\") / Quit(confirm=False)",
+          },
+        },
+        required: ['label', 'action'],
+      },
+    },
+  },
+  required: ['headerText', 'buttons'],
+} as const;
 
 export async function generateUiPatch(
   params: GenerateUiPatchParams,
 ): Promise<GenerateUiPatchResult> {
-  const res = await params.llmClient.chat({
+  if (!params.llmClient.chatWithTools) {
+    throw new Error('generateUiPatch requires an LlmClient that supports chatWithTools.');
+  }
+
+  const userMsg = [
+    `Project title: ${params.projectTitle}`,
+    `Screen to override: ${params.screen}`,
+    `Visual mood: ${params.moodTag}`,
+    '',
+    `Emit the UI design by calling emit_ui_design. Use "${params.projectTitle}" as the headerText` +
+      ` unless the screen meaning demands otherwise (e.g. "Load Game" for save_load).`,
+  ].join('\n');
+
+  const res = await params.llmClient.chatWithTools({
     messages: [
       { role: 'system', content: UI_PATCH_SYSTEM_PROMPT },
+      { role: 'user', content: userMsg },
+    ],
+    tools: [
       {
-        role: 'user',
-        content: buildUserPrompt(params.screen, params.moodTag, params.projectTitle),
+        name: 'emit_ui_design',
+        description: 'Emit the UI design for a single Ren\'Py screen as a structured tool call.',
+        inputSchema: UI_PATCH_TOOL_INPUT_SCHEMA as unknown as Record<string, unknown>,
       },
     ],
     temperature: params.temperature ?? 0.6,
     maxTokens: params.maxTokens ?? 1024,
   });
 
-  const patch = stripFence(res.content).trim();
+  const design = parseDesign(res);
+  const patch = renderUiPatch({
+    screen: params.screen,
+    moodTag: params.moodTag,
+    design,
+  });
   validateUiPatch(patch, params.screen);
   return { screen: params.screen, rpyScreenPatch: patch };
 }
 
-/** 如果 LLM 不听话包了 ``` fence,剥一层。否则原样返回。 */
-function stripFence(text: string): string {
-  const fenceMatch = text.match(/```(?:renpy|rpy|python)?\s*\n([\s\S]*?)\n```/);
-  return fenceMatch ? fenceMatch[1]! : text;
+function parseDesign(res: LlmToolChatResponse): UiPatchDesign {
+  const toolUse = res.content.find(
+    (b): b is LlmToolUseBlock => b.type === 'tool_use' && b.name === 'emit_ui_design',
+  );
+  if (!toolUse) {
+    throw new Error('LLM did not call tool emit_ui_design');
+  }
+  const input = toolUse.input as Record<string, unknown> | undefined;
+  if (!input || typeof input !== 'object') {
+    throw new Error('emit_ui_design input is not an object');
+  }
+  if (typeof input.headerText !== 'string' || input.headerText.length === 0) {
+    throw new Error('emit_ui_design: headerText must be a non-empty string');
+  }
+  if (!Array.isArray(input.buttons)) {
+    throw new Error('emit_ui_design: buttons must be an array');
+  }
+  const buttons: UiPatchButton[] = [];
+  for (const [i, raw] of input.buttons.entries()) {
+    if (!raw || typeof raw !== 'object') {
+      throw new Error(`emit_ui_design: buttons[${i}] is not an object`);
+    }
+    const b = raw as Record<string, unknown>;
+    if (typeof b.label !== 'string' || b.label.length === 0) {
+      throw new Error(`emit_ui_design: buttons[${i}].label must be a non-empty string`);
+    }
+    if (typeof b.action !== 'string' || b.action.length === 0) {
+      throw new Error(`emit_ui_design: buttons[${i}].action must be a non-empty string`);
+    }
+    assertSafeLiteral(b.label, `button label[${i}]`);
+    assertSafeAction(b.action, `button action[${i}]`);
+    buttons.push({ label: b.label, action: b.action });
+  }
+  const headerText = input.headerText;
+  assertSafeLiteral(headerText, 'headerText');
+
+  const design: {
+    headerText: string;
+    buttons: ReadonlyArray<UiPatchButton>;
+    bgColor?: string;
+    layout?: 'vbox' | 'hbox';
+  } = { headerText, buttons };
+
+  if (input.bgColor !== undefined) {
+    if (typeof input.bgColor !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(input.bgColor)) {
+      throw new Error('emit_ui_design: bgColor must be a #rrggbb hex string');
+    }
+    design.bgColor = input.bgColor;
+  }
+  if (input.layout !== undefined) {
+    if (input.layout !== 'vbox' && input.layout !== 'hbox') {
+      throw new Error('emit_ui_design: layout must be "vbox" or "hbox"');
+    }
+    design.layout = input.layout;
+  }
+  return design;
+}
+
+function assertSafeLiteral(text: string, where: string): void {
+  if (/["\\\n\r]/.test(text)) {
+    throw new Error(`${where} contains disallowed characters (quote/backslash/newline)`);
+  }
+}
+
+function assertSafeAction(text: string, where: string): void {
+  // Allow letters, digits, underscore, parens, quotes, dots, commas, equals, spaces,
+  // and plain ASCII punctuation typical for Ren'Py actions like Start() / ShowMenu("load")
+  // / Quit(confirm=False). Reject newlines and backslashes.
+  if (/[\n\r\\]/.test(text)) {
+    throw new Error(`${where} contains disallowed characters (newline/backslash)`);
+  }
+}
+
+export interface RenderUiPatchParams {
+  readonly screen: UiDesign['screen'];
+  readonly moodTag: string;
+  readonly design: UiPatchDesign;
+}
+
+export function renderUiPatch(params: RenderUiPatchParams): string {
+  const { screen, moodTag, design } = params;
+  const layout = design.layout ?? 'vbox';
+  const lines: string[] = [];
+  lines.push(`# --- ui-patch: ${screen} (mood: ${moodTag}) ---`);
+  lines.push(`screen ${screen}():`);
+  lines.push(`    tag menu`);
+  if (design.bgColor) {
+    lines.push(`    add Solid("${design.bgColor}")`);
+  }
+  lines.push(`    ${layout}:`);
+  lines.push(`        xalign 0.5 yalign 0.4`);
+  lines.push(`        text "${design.headerText}" size 60`);
+  for (const btn of design.buttons) {
+    lines.push(`        textbutton "${btn.label}" action ${btn.action}`);
+  }
+  return lines.join('\n') + '\n';
 }
 
 export function validateUiPatch(patch: string, screen: UiDesign['screen']): void {
-  if (patch.length === 0) {
+  if (patch.trim().length === 0) {
     throw new Error('UI patch is empty');
   }
-  // Allow blank lines and `#` comments above the `screen ...` header.
   const firstCodeLine = patch
     .split('\n')
     .map((l) => l.trim())
@@ -97,21 +247,5 @@ export function validateUiPatch(patch: string, screen: UiDesign['screen']): void
     throw new Error(
       `UI patch must start with \`${header}(\`, got: "${firstCodeLine.slice(0, 60)}"`,
     );
-  }
-  const banned: ReadonlyArray<[RegExp, string]> = [
-    [/^\s*import\s+/m, 'import statement'],
-    [/^\s*init\s+python/m, 'init python block'],
-    [/^\s*init\s*:/m, 'init block'],
-    [/^\s*default\s+/m, 'default statement'],
-    [/^\s*style\s+\w/m, 'style override'],
-    // `font "<path>"` would reference a file the project doesn't ship. The
-    // only bundled font is SourceHanSansLite.ttf, already wired through
-    // gui.text_font — text elements should inherit it, not override it.
-    [/^\s*font\s+["']/m, 'font property'],
-  ];
-  for (const [regex, label] of banned) {
-    if (regex.test(patch)) {
-      throw new Error(`UI patch contains forbidden ${label}`);
-    }
   }
 }
