@@ -26,7 +26,20 @@ describe('path helpers', () => {
 
   it('slugForFilename is ascii lowercase', () => {
     expect(slugForFilename('Baiying 白樱')).toBe('baiying');
-    expect(slugForFilename('!!!')).toBe('asset');
+  });
+
+  it('slugForFilename falls back to stable char_<sha1_8> when ASCII is empty', () => {
+    // Pure CJK / emoji / punctuation all hit the fallback branch.
+    const baiying = slugForFilename('白樱');
+    const yingbai = slugForFilename('樱白');
+    const empty = slugForFilename('!!!');
+    for (const slug of [baiying, yingbai, empty]) {
+      expect(slug).toMatch(/^char_[0-9a-f]{8}$/);
+    }
+    // Distinct inputs → distinct slugs (prevents "白樱" / "樱白" collisions).
+    expect(baiying).not.toBe(yingbai);
+    // Deterministic across calls.
+    expect(slugForFilename('白樱')).toBe(baiying);
   });
 });
 

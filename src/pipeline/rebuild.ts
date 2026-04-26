@@ -8,14 +8,25 @@ import { resolve } from 'node:path';
 import { loadRegistry, registryPathForGame } from '../assets/registry.js';
 import { validateUiPatch } from '../executers/ui-designer/generate-ui-patch.js';
 import type { UiDesign } from '../schema/galgame-workspace.js';
+import {
+  listWorkspaceCollection,
+  readWorkspaceDoc,
+} from '../agents/workspace-io.js';
 import { writeGameProject } from './coder.js';
 import { runQa } from './qa.js';
 import {
   loadStoryWorkspace,
   workspacePathsForGame,
+  type StoryWorkspaceSnapshot,
   type UiSnapshot,
 } from './workspace.js';
-import type { TestRunResult } from './types.js';
+import type {
+  PlannerOutput,
+  PlannerOutputCharacter,
+  StoryboarderOutput,
+  TestRunResult,
+  WriterOutput,
+} from './types.js';
 
 export interface RebuildOptions {
   readonly storyName: string;
@@ -36,7 +47,7 @@ export async function rebuildGameProject(opts: RebuildOptions): Promise<RebuildR
   const runtimeRoot = opts.runtimeRoot ?? resolve(process.cwd(), 'runtime');
   const gameDir = resolve(runtimeRoot, 'games', opts.storyName, 'game');
 
-  const snapshot = await loadStoryWorkspace(gameDir);
+  const snapshot = await loadWorkspaceSnapshotForRebuild(gameDir);
   const registry = await loadRegistry(registryPathForGame(gameDir));
   const uiPatches = await loadValidatedUiPatches(gameDir);
 
@@ -55,6 +66,70 @@ export async function rebuildGameProject(opts: RebuildOptions): Promise<RebuildR
   });
 
   return { gamePath: gameDir, testRun };
+}
+
+/**
+ * v0.7: prefer the V5 per-URI layout, fall back to v0.2 aggregate JSON.
+ * This lets `rebuild` handle both legacy v0.4 projects (aggregate only) and
+ * new V5 projects (per-URI canonical, aggregate mirrored by the pipeline).
+ */
+async function loadWorkspaceSnapshotForRebuild(
+  gameDir: string,
+): Promise<StoryWorkspaceSnapshot> {
+  const perUri = await tryLoadFromPerUri(gameDir);
+  if (perUri) return perUri;
+  return await loadStoryWorkspace(gameDir);
+}
+
+async function tryLoadFromPerUri(
+  gameDir: string,
+): Promise<StoryWorkspaceSnapshot | undefined> {
+  const project = await readWorkspaceDoc<{
+    title?: string;
+    genre?: string;
+    tone?: string;
+  }>('workspace://project', gameDir);
+  const chapter = await readWorkspaceDoc<{ outline?: string }>('workspace://chapter', gameDir);
+  const writer = await readWorkspaceDoc<WriterOutput>('workspace://script', gameDir);
+  const storyboarder = await readWorkspaceDoc<StoryboarderOutput>(
+    'workspace://storyboard',
+    gameDir,
+  );
+  if (!project || !chapter || !writer || !storyboarder) return undefined;
+
+  const characters: PlannerOutputCharacter[] = [];
+  for (const e of await listWorkspaceCollection('character', gameDir)) {
+    const doc = await readWorkspaceDoc<{
+      name: string;
+      description: string;
+      visualDescription: string;
+    }>(e.uri, gameDir);
+    if (doc) {
+      characters.push({
+        name: doc.name,
+        description: doc.description,
+        visualDescription: doc.visualDescription,
+      });
+    }
+  }
+  const scenes: Array<{ name: string; description: string }> = [];
+  for (const e of await listWorkspaceCollection('scene', gameDir)) {
+    const doc = await readWorkspaceDoc<{ name: string; description: string }>(
+      e.uri,
+      gameDir,
+    );
+    if (doc) scenes.push({ name: doc.name, description: doc.description });
+  }
+
+  const planner: PlannerOutput = {
+    projectTitle: project.title ?? '',
+    genre: project.genre ?? '',
+    tone: project.tone ?? '',
+    characters,
+    scenes,
+    chapterOutline: chapter.outline ?? '',
+  };
+  return { planner, writer, storyboarder };
 }
 
 /**

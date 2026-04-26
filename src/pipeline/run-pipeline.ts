@@ -18,6 +18,7 @@ import type { PipelineResult } from './types.js';
 import {
   saveAudioUiWorkspace,
   saveStoryWorkspace,
+  saveStoryWorkspacePerUri,
   savePlannerSnapshot,
   saveWriterSnapshot,
   saveStoryboarderSnapshot,
@@ -211,8 +212,13 @@ export async function runPipeline(params: RunPipelineParams): Promise<PipelineRe
     ...(assetRegistry !== undefined ? { assetRegistry } : {}),
     ...(uiPatches.length > 0 ? { uiPatches } : {}),
   });
+  // Aggregate JSON is kept for v0.2 resume + legacy compat; per-URI projection
+  // is what v0.6+ V5 tools (and `modify` after v0.7) actually read. Writing
+  // both keeps the two entry points interchangeable until the aggregate files
+  // can be retired in v0.8.
   await saveStoryWorkspace(gameDir, { planner, writer, storyboarder });
-  log.info('[coder] done (workspace snapshot saved)');
+  await saveStoryWorkspacePerUri(gameDir, { planner, writer, storyboarder });
+  log.info('[coder] done (workspace snapshot saved, per-URI mirror written)');
 
   log.info('[qa] running renpy lint...');
   const testRun = await runQa({ gamePath: gameDir, repoRoot });
