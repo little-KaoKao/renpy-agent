@@ -27,6 +27,10 @@ export function logicalKeyForCharacterExpression(
   return `character:${slugForFilename(characterName)}:expr:${slugForFilename(expressionName)}`;
 }
 
+export function logicalKeyForCharacterDynamicSprite(characterName: string): string {
+  return `character:${slugForFilename(characterName)}:dynamic`;
+}
+
 export function logicalKeyForScene(name: string): string {
   return `scene:${slugForFilename(name)}:bg`;
 }

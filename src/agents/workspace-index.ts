@@ -7,15 +7,40 @@ export type WorkspaceKind =
   | 'character'
   | 'scene'
   | 'script'
-  | 'storyboard';
+  | 'storyboard'
+  | 'bgmTrack'
+  | 'voiceLine'
+  | 'sfx'
+  | 'uiDesign'
+  | 'cutscene'
+  | 'prop'
+  | 'bugReport';
 
 const SINGLETON_KINDS = new Set<WorkspaceKind>(['project', 'chapter', 'script', 'storyboard']);
-const COLLECTION_KINDS = new Set<WorkspaceKind>(['character', 'scene']);
+type CollectionKind = Exclude<WorkspaceKind, 'project' | 'chapter' | 'script' | 'storyboard'>;
+const COLLECTION_KINDS = new Set<WorkspaceKind>([
+  'character',
+  'scene',
+  'bgmTrack',
+  'voiceLine',
+  'sfx',
+  'uiDesign',
+  'cutscene',
+  'prop',
+  'bugReport',
+]);
 const ALL_KINDS = new Set<WorkspaceKind>([...SINGLETON_KINDS, ...COLLECTION_KINDS]);
 
-const COLLECTION_DIRNAME: Record<Extract<WorkspaceKind, 'character' | 'scene'>, string> = {
+const COLLECTION_DIRNAME: Record<CollectionKind, string> = {
   character: 'characters',
   scene: 'scenes',
+  bgmTrack: 'bgm_tracks',
+  voiceLine: 'voice_lines',
+  sfx: 'sfx',
+  uiDesign: 'ui_designs',
+  cutscene: 'cutscenes',
+  prop: 'props',
+  bugReport: 'bug_reports',
 };
 
 export interface ParsedUri {
@@ -24,7 +49,7 @@ export interface ParsedUri {
 }
 
 export function parseWorkspaceUri(uri: string): ParsedUri {
-  const match = /^workspace:\/\/([a-z]+)(?:\/([A-Za-z0-9_-]+))?$/.exec(uri);
+  const match = /^workspace:\/\/([a-zA-Z]+)(?:\/([A-Za-z0-9_-]+))?$/.exec(uri);
   if (!match) {
     throw new Error(`invalid workspace:// URI: ${uri}`);
   }
@@ -49,7 +74,7 @@ export function resolveUriToPath(uri: string, gameDir: string): string {
   if (!slug) {
     throw new Error(`URI ${uri} requires a slug (kind=${kind})`);
   }
-  const subdir = COLLECTION_DIRNAME[kind as 'character' | 'scene'];
+  const subdir = COLLECTION_DIRNAME[kind as CollectionKind];
   return resolve(wsDir, subdir, `${slug}.json`);
 }
 
@@ -90,7 +115,7 @@ export async function buildWorkspaceIndex(gameDir: string): Promise<WorkspaceInd
   }
 
   for (const kind of COLLECTION_KINDS) {
-    const subdir = COLLECTION_DIRNAME[kind as 'character' | 'scene'];
+    const subdir = COLLECTION_DIRNAME[kind as CollectionKind];
     const collectionDir = resolve(wsDir, subdir);
     const files = await tryReadDir(collectionDir);
     for (const file of files) {

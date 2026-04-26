@@ -448,6 +448,19 @@ async function runV5Command(cmd: V5Command): Promise<number> {
   const llm = new ClaudeLlmClient();
   const gameDir = gameDirFor(storyName);
   const logger: FileLogger = createFileLogger(logsDirForGame(gameDir));
+
+  // Tier 2 tools need a RunningHubClient. We opt-in from env so scripted runs
+  // (no key) still return clean "runningHubClient not injected" errors per tool
+  // instead of crashing at CLI startup.
+  let runningHubClient: RunningHubClient | undefined;
+  const rhKey = process.env.RUNNINGHUB_API_KEY;
+  if (rhKey) {
+    runningHubClient = new HttpRunningHubClient({
+      apiKey: rhKey,
+      appSchemas: RUNNINGHUB_APP_SCHEMAS,
+    });
+  }
+
   try {
     const result = await runV5({
       storyName,
@@ -455,6 +468,7 @@ async function runV5Command(cmd: V5Command): Promise<number> {
       llm,
       gameDir,
       logger,
+      ...(runningHubClient !== undefined ? { runningHubClient } : {}),
     });
     console.log(`\n✅ V5 run complete. Game at: ${result.gameDir}`);
     console.log(`   Planner tasks: ${result.plannerTaskCount}`);
