@@ -6,6 +6,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { LlmClient } from '../llm/types.js';
+import type { RunningHubClient } from '../executers/common/runninghub-client.js';
+import type { FetchLike } from '../assets/download.js';
 import { runPlannerTask } from './planner.js';
 import type { CommonToolContext, TaskAgentRegistry } from './common-tools.js';
 import { workspaceDirForGame } from './workspace-index.js';
@@ -17,8 +19,12 @@ export interface RunV5Params {
   readonly gameDir: string;
   readonly taskAgents?: TaskAgentRegistry;
   readonly logger?: CommonToolContext['logger'];
-  /** Max Planner tasks to try before giving up. */
+  /** Max Planner tasks to try before giving up. Defaults to 40 (env V5_MAX_PLANNER_TASKS override). */
   readonly maxPlannerTasks?: number;
+  /** Optional: Tier 2 tools need this to call RunningHub. Omit for scripted tests. */
+  readonly runningHubClient?: RunningHubClient;
+  readonly registryPath?: string;
+  readonly fetchFn?: FetchLike;
 }
 
 export interface RunV5Result {
@@ -26,6 +32,12 @@ export interface RunV5Result {
   readonly gameDir: string;
   readonly plannerTaskCount: number;
   readonly finalSummary: string;
+}
+
+function parseEnvMax(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 function defaultLogger(): CommonToolContext['logger'] {
@@ -58,9 +70,15 @@ export async function runV5(params: RunV5Params): Promise<RunV5Result> {
     taskAgents: params.taskAgents ?? {},
     logger: params.logger ?? defaultLogger(),
     llm: params.llm,
+    ...(params.runningHubClient !== undefined
+      ? { runningHubClient: params.runningHubClient }
+      : {}),
+    ...(params.registryPath !== undefined ? { registryPath: params.registryPath } : {}),
+    ...(params.fetchFn !== undefined ? { fetchFn: params.fetchFn } : {}),
   };
 
-  const maxPlannerTasks = params.maxPlannerTasks ?? 20;
+  const envMax = parseEnvMax(process.env.V5_MAX_PLANNER_TASKS);
+  const maxPlannerTasks = params.maxPlannerTasks ?? envMax ?? 40;
   let finalSummary = '';
   let taskCount = 0;
 

@@ -8,6 +8,8 @@
 
 import { readFile } from 'node:fs/promises';
 import type { LlmClient } from '../llm/types.js';
+import type { RunningHubClient } from '../executers/common/runninghub-client.js';
+import type { FetchLike } from '../assets/download.js';
 import {
   appendPlannerMemory,
   type PlannerMemoryEntry,
@@ -48,8 +50,18 @@ export interface CommonToolContext {
   readonly memoryDir: string;
   readonly taskAgents: TaskAgentRegistry;
   readonly logger: CommonToolLogger;
-  /** Optional: tools that do LLM calls (writer, storyboarder) inject this. */
+  /** Optional: tools that do LLM calls (writer, storyboarder, ui_designer) inject this. */
   readonly llm?: LlmClient;
+  /** Optional: Tier 2 audio/image/video tools need this to submit RunningHub tasks. */
+  readonly runningHubClient?: RunningHubClient;
+  /**
+   * Optional: path to asset-registry.json. Tier 2 tools use it with swapAssetPlaceholder /
+   * markAssetError. Defaults to `<gameDir>/../asset-registry.json` when absent — tools
+   * resolve this lazily via `registryPathForGame(ctx.gameDir)`.
+   */
+  readonly registryPath?: string;
+  /** Optional: fetch override for asset downloads (tests pin this to a local server). */
+  readonly fetchFn?: FetchLike;
 }
 
 // ── Planner side ────────────────────────────────────────────────────

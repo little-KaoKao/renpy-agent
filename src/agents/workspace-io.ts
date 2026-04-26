@@ -40,12 +40,26 @@ export interface CollectionListResult {
   readonly path: string;
 }
 
+type CollectionKind = Exclude<WorkspaceKind, 'project' | 'chapter' | 'script' | 'storyboard'>;
+
+const COLLECTION_SUBDIR: Record<CollectionKind, string> = {
+  character: 'characters',
+  scene: 'scenes',
+  bgmTrack: 'bgm_tracks',
+  voiceLine: 'voice_lines',
+  sfx: 'sfx',
+  uiDesign: 'ui_designs',
+  cutscene: 'cutscenes',
+  prop: 'props',
+  bugReport: 'bug_reports',
+};
+
 export async function listWorkspaceCollection(
-  kind: Extract<WorkspaceKind, 'character' | 'scene'>,
+  kind: CollectionKind,
   gameDir: string,
 ): Promise<ReadonlyArray<CollectionListResult>> {
   const wsDir = workspaceDirForGame(gameDir);
-  const subdir = kind === 'character' ? 'characters' : 'scenes';
+  const subdir = COLLECTION_SUBDIR[kind];
   const dir = resolve(wsDir, subdir);
   try {
     const s = await stat(dir);

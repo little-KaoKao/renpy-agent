@@ -3,7 +3,10 @@ import { mkdtemp, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import type { CommonToolContext } from '../../agents/common-tools.js';
+import type { RunningHubClient } from '../common/runninghub-client.js';
+import type { FetchLike } from '../../assets/download.js';
 import { characterDesignerTools } from './tools.js';
+import { writeWorkspaceDoc } from '../../agents/workspace-io.js';
 
 async function makeCtx(): Promise<CommonToolContext> {
   const root = await mkdtemp(resolve(tmpdir(), 'v5-chardesigner-'));
@@ -126,8 +129,142 @@ describe('characterDesigner.generate_character_main_image (v0.6 stub)', () => {
   });
 });
 
+async function makeCtxWithClient(overrides: Partial<RunningHubClient> = {}) {
+  const root = await mkdtemp(resolve(tmpdir(), 'v5-chardesigner-tier2-'));
+  const gameDir = resolve(root, 'game');
+  await mkdir(gameDir, { recursive: true });
+  const client: RunningHubClient = {
+    submitTask: vi.fn().mockResolvedValue({ taskId: 't1' }),
+    pollTask: vi.fn().mockResolvedValue({ status: 'done', outputUri: 'https://cdn/out.png' }),
+    ...overrides,
+  };
+  const fetchFn: FetchLike = vi.fn(
+    async () => new Response(new Uint8Array([1, 2]), { status: 200 }),
+  ) as unknown as FetchLike;
+  return {
+    storyName: 's',
+    gameDir,
+    workspaceDir: resolve(root, 'workspace'),
+    memoryDir: resolve(root, 'memory'),
+    taskAgents: {},
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    runningHubClient: client,
+    fetchFn,
+  } satisfies CommonToolContext;
+}
+
+describe('characterDesigner.generate_character_expression', () => {
+  it('errors without mainImageUri', async () => {
+    const ctx = await makeCtxWithClient();
+    await writeWorkspaceDoc('workspace://character/baiying', ctx.gameDir, {
+      name: 'Baiying',
+      description: 'd',
+      visualDescription: 'vd',
+      mainImageUri: null,
+      status: 'placeholder',
+    });
+    const res = await characterDesignerTools.executors.generate_character_expression!(
+      {
+        characterUri: 'workspace://character/baiying',
+        expressionName: 'smile',
+        expressionPrompt: 'smiling softly',
+      },
+      ctx,
+    );
+    expect(res).toMatchObject({ error: expect.stringMatching(/mainImageUri/) });
+  });
+
+  it('errors when character not found', async () => {
+    const ctx = await makeCtxWithClient();
+    const res = await characterDesignerTools.executors.generate_character_expression!(
+      {
+        characterName: 'Unknown',
+        expressionName: 'smile',
+        expressionPrompt: 'smile',
+      },
+      ctx,
+    );
+    expect(res).toMatchObject({ error: expect.stringMatching(/character not found/) });
+  });
+
+  it('appends expression variant and updates character doc', async () => {
+    const ctx = await makeCtxWithClient({
+      pollTask: vi.fn().mockResolvedValue({ status: 'done', outputUri: 'https://cdn/smile.png' }),
+    });
+    await writeWorkspaceDoc('workspace://character/baiying', ctx.gameDir, {
+      name: 'Baiying',
+      description: 'd',
+      visualDescription: 'vd',
+      mainImageUri: 'images/char/baiying.png',
+      status: 'ready',
+    });
+    const res = (await characterDesignerTools.executors.generate_character_expression!(
+      {
+        characterName: 'Baiying',
+        expressionName: 'smile',
+        expressionPrompt: 'smiling softly',
+      },
+      ctx,
+    )) as { uri: string; expressionName: string; imageUri: string; status: string };
+    expect(res.status).toBe('ready');
+    expect(res.expressionName).toBe('smile');
+    const doc = JSON.parse(
+      await readFile(
+        resolve(ctx.gameDir, '..', 'workspace', 'characters', 'baiying.json'),
+        'utf8',
+      ),
+    );
+    expect(doc.expressions).toHaveLength(1);
+    expect(doc.expressions[0]).toMatchObject({ expressionName: 'smile' });
+  });
+});
+
+describe('characterDesigner.generate_character_dynamic_sprite', () => {
+  it('errors without mainImageUri', async () => {
+    const ctx = await makeCtxWithClient();
+    await writeWorkspaceDoc('workspace://character/baiying', ctx.gameDir, {
+      name: 'Baiying',
+      description: 'd',
+      visualDescription: 'vd',
+      mainImageUri: null,
+      status: 'placeholder',
+    });
+    const res = await characterDesignerTools.executors.generate_character_dynamic_sprite!(
+      { characterName: 'Baiying' },
+      ctx,
+    );
+    expect(res).toMatchObject({ error: expect.stringMatching(/mainImageUri/) });
+  });
+
+  it('writes dynamicSpriteUri onto character doc', async () => {
+    const ctx = await makeCtxWithClient({
+      pollTask: vi.fn().mockResolvedValue({ status: 'done', outputUri: 'https://cdn/dyn.mp4' }),
+    });
+    await writeWorkspaceDoc('workspace://character/baiying', ctx.gameDir, {
+      name: 'Baiying',
+      description: 'd',
+      visualDescription: 'vd',
+      mainImageUri: 'images/char/baiying.png',
+      status: 'ready',
+    });
+    const res = (await characterDesignerTools.executors.generate_character_dynamic_sprite!(
+      { characterName: 'Baiying' },
+      ctx,
+    )) as { uri: string; videoUri: string; status: string };
+    expect(res.status).toBe('ready');
+    expect(res.videoUri).toBe('videos/char/baiying.mp4');
+    const doc = JSON.parse(
+      await readFile(
+        resolve(ctx.gameDir, '..', 'workspace', 'characters', 'baiying.json'),
+        'utf8',
+      ),
+    );
+    expect(doc.dynamicSpriteUri).toBe('videos/char/baiying.mp4');
+  });
+});
+
 describe('characterDesigner.schemas', () => {
-  it('declares Tier-1 tools and Tier-2 stubs', () => {
+  it('declares Tier-1 and Tier-2 tools', () => {
     const names = characterDesignerTools.schemas.map((s) => s.name);
     expect(names).toEqual(
       expect.arrayContaining([

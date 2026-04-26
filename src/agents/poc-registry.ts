@@ -85,25 +85,29 @@ export const POC_REGISTRY: Readonly<Record<PocRole, PocDescriptor>> = {
   music_director: {
     role: 'music_director',
     tier: 2,
-    description: '音乐总监:章节级 BGM 生成(v0.6 stub,v0.7 接入)。',
+    description:
+      '音乐总监:章节级 BGM 生成(SunoV5),落 workspace://bgmTrack/<slug>。',
     toolNames: ['generate_bgm_track'],
   },
   voice_director: {
     role: 'voice_director',
     tier: 2,
-    description: '配音导演:角色台词 TTS 生成(v0.6 stub,v0.7 接入)。',
+    description:
+      '配音导演:基于 Storyboard 的单句对白 TTS(Qwen3),落 workspace://voiceLine/shot_<N>_line_<i>。',
     toolNames: ['generate_voice_line'],
   },
   sfx_designer: {
     role: 'sfx_designer',
     tier: 2,
-    description: '音效设计师:Shot 级 cue 音效生成(v0.6 stub,v0.7 接入)。',
+    description:
+      '音效设计师:Shot × cue 级环境音效(临时复用 Qwen3),落 workspace://sfx/shot_<N>_<cue>。',
     toolNames: ['generate_sfx'],
   },
   ui_designer: {
     role: 'ui_designer',
     tier: 2,
-    description: 'UI 设计师:Ren\'Py 界面 mood patch(v0.6 stub,v0.7 接入)。',
+    description:
+      'UI 设计师:Ren\'Py screens.rpy mood patch(LLM tool_use + deterministic renderer),落 workspace://uiDesign/<screen>。',
     toolNames: ['generate_ui_patch'],
   },
   coder: {
@@ -116,7 +120,8 @@ export const POC_REGISTRY: Readonly<Record<PocRole, PocDescriptor>> = {
   qa: {
     role: 'qa',
     tier: 1,
-    description: 'QA:跑 renpy lint,发现问题回踢给 coder(回踢 v0.6 stub,v0.7 接入)。',
+    description:
+      'QA:跑 renpy lint;失败时用 kick_back_to_coder 归档 BugReport(workspace://bugReport/<id>),让 Planner 读后决定是否 re-handoff coder。',
     toolNames: ['run_qa', 'kick_back_to_coder'],
   },
 };
