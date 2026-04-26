@@ -1,8 +1,6 @@
-import type { LlmClient } from '../llm/types.js';
-import { extractJsonBlock } from '../llm/claude-client.js';
-import { retryJsonParse } from '../llm/retry.js';
+import type { LlmClient, LlmToolUseBlock } from '../llm/types.js';
+import { retryOnStageValidationError } from '../llm/retry.js';
 import { wrapParseError } from '../llm/stage-parse-error.js';
-import { repairCjkInnerQuotes } from '../llm/json-repair.js';
 import type { PlannerOutput, WriterOutput } from './types.js';
 
 const WRITER_SYSTEM = `You are the Writer for a Ren'Py galgame.
@@ -11,28 +9,57 @@ Write a single-chapter script as structured dialogue. Keep it short enough to fi
 (the Storyboarder will condense it). Use only characters that appear in PlannerOutput.characters
 and locations that appear in PlannerOutput.scenes.
 
-Return ONLY a JSON object inside a \`\`\`json fence, matching:
-\`\`\`typescript
-interface WriterOutput {
-  scenes: Array<{
-    location: string;                    // MUST match one of planner.scenes[].name
-    characters: Array<string>;           // subset of planner.characters[].name
-    lines: Array<{
-      speaker: string;                   // character name, or "narrator" for inner monologue
-      text: string;                      // one spoken line (no stage directions inside)
-      emotion?: string;                  // optional, short (e.g. "sad", "hopeful")
-      direction?: string;                // optional stage direction (e.g. "looks up")
-    }>;
-  }>;
-}
-\`\`\`
-No prose outside the fence.
+Call the tool \`emit_writer_output\` exactly once with the structured WriterOutput.
+Do NOT emit prose — only the tool call.`;
 
-CRITICAL: If a line of dialogue needs quoted speech or thought inside it, use
-Chinese full-width quotes 「」 or 『』, NOT raw ASCII double quotes. Raw inner
-\`"\` breaks JSON parsing.
-Bad:  "text": "他说"别走"。"
-Good: "text": "他说「别走」。"`;
+const WRITER_TOOL_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    scenes: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        properties: {
+          location: {
+            type: 'string',
+            description: 'MUST match one of planner.scenes[].name',
+          },
+          characters: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'subset of planner.characters[].name',
+          },
+          lines: {
+            type: 'array',
+            minItems: 1,
+            items: {
+              type: 'object',
+              properties: {
+                speaker: {
+                  type: 'string',
+                  description: 'character name, or "narrator" for inner monologue',
+                },
+                text: {
+                  type: 'string',
+                  description: 'one spoken line (no stage directions inside)',
+                },
+                emotion: { type: 'string', description: 'short, e.g. "sad", "hopeful"' },
+                direction: {
+                  type: 'string',
+                  description: 'optional stage direction (e.g. "looks up")',
+                },
+              },
+              required: ['speaker', 'text'],
+            },
+          },
+        },
+        required: ['location', 'characters', 'lines'],
+      },
+    },
+  },
+  required: ['scenes'],
+} as const;
 
 export interface RunWriterParams {
   readonly planner: PlannerOutput;
@@ -40,50 +67,63 @@ export interface RunWriterParams {
 }
 
 export async function runWriter(params: RunWriterParams): Promise<WriterOutput> {
+  if (!params.llm.chatWithTools) {
+    throw new Error('runWriter requires an LlmClient that supports chatWithTools.');
+  }
+
   const userMsg = [
     'PLANNER OUTPUT:',
     '```json',
     JSON.stringify(params.planner, null, 2),
     '```',
     '',
-    'Now write the chapter script as WriterOutput.',
+    'Now emit the chapter script by calling emit_writer_output with the structured WriterOutput.',
   ].join('\n');
 
-  return retryJsonParse({
+  return retryOnStageValidationError({
     attempt: async () => {
-      const res = await params.llm.chat({
+      const res = await params.llm.chatWithTools!({
         messages: [
           { role: 'system', content: WRITER_SYSTEM },
           { role: 'user', content: userMsg },
+        ],
+        tools: [
+          {
+            name: 'emit_writer_output',
+            description: 'Emit the WriterOutput as a single structured tool call.',
+            inputSchema: WRITER_TOOL_INPUT_SCHEMA as unknown as Record<string, unknown>,
+          },
         ],
         temperature: 0.7,
         maxTokens: 4096,
       });
       try {
-        const json = extractJsonBlock(res.content);
-        const parsed = tryParseWithRepair<WriterOutput>(json);
+        const parsed = extractToolInput(res.content, 'emit_writer_output');
         assertWriterOutput(parsed);
         return parsed;
       } catch (e) {
-        throw wrapParseError(e, res.content);
+        throw wrapParseError(e, JSON.stringify(res.content));
       }
     },
     onRetry: (err, attempt) => {
-      console.warn(`[writer] attempt ${attempt} produced invalid output (${err.message}); retrying...`);
+      console.warn(
+        `[writer] attempt ${attempt} produced invalid output (${err.message}); retrying...`,
+      );
     },
   });
 }
 
-function tryParseWithRepair<T>(json: string): T {
-  try {
-    return JSON.parse(json) as T;
-  } catch (firstErr) {
-    const repaired = repairCjkInnerQuotes(json);
-    if (repaired !== json) {
-      return JSON.parse(repaired) as T;
-    }
-    throw firstErr;
+function extractToolInput(
+  content: ReadonlyArray<{ type: string }>,
+  toolName: string,
+): unknown {
+  const toolUse = content.find(
+    (b): b is LlmToolUseBlock => b.type === 'tool_use' && (b as LlmToolUseBlock).name === toolName,
+  );
+  if (!toolUse) {
+    throw new Error(`LLM did not call tool ${toolName}`);
   }
+  return toolUse.input;
 }
 
 function assertWriterOutput(value: unknown): asserts value is WriterOutput {

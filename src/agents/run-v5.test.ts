@@ -7,25 +7,26 @@ import type { LlmClient, LlmToolChatResponse, LlmToolChatParams } from '../llm/t
 
 /**
  * Scripted LLM that produces deterministic responses.
- * The script is a list of matchers-by-tool-sequence, picked in order.
+ *
+ * Routing:
+ * - If tool list contains `handoff_to_agent` → planner queue
+ * - If tool list contains exactly one `emit_*` tool (Writer / Storyboarder pipeline
+ *   stages reached via draft_script / condense_to_shots) → stage queue
+ * - Otherwise → executer queue
  */
 function scriptedLlm(script: {
   planner: LlmToolChatResponse[];
   executer: LlmToolChatResponse[];
-  chatOutputs?: string[]; // for runWriter / runStoryboarder if they're called
+  stage?: LlmToolChatResponse[]; // for runWriter / runStoryboarder tool_use calls
 }): LlmClient {
   let plannerIdx = 0;
   let executerIdx = 0;
-  let chatIdx = 0;
-  const chatOutputs = script.chatOutputs ?? [];
+  let stageIdx = 0;
+  const stage = script.stage ?? [];
 
   return {
     chat: vi.fn(async () => {
-      if (chatIdx >= chatOutputs.length) {
-        throw new Error(`scripted chat() exhausted (idx ${chatIdx})`);
-      }
-      const out = chatOutputs[chatIdx++]!;
-      return { content: out, usage: { inputTokens: 1, outputTokens: 1 } };
+      throw new Error('scripted chat() should not be called; pipeline stages use chatWithTools');
     }),
     chatWithTools: vi.fn(async (params: LlmToolChatParams) => {
       const names = params.tools.map((t) => t.name);
@@ -34,6 +35,12 @@ function scriptedLlm(script: {
           throw new Error(`scripted planner exhausted (idx ${plannerIdx})`);
         }
         return script.planner[plannerIdx++]!;
+      }
+      if (names.length === 1 && names[0]!.startsWith('emit_')) {
+        if (stageIdx >= stage.length) {
+          throw new Error(`scripted stage exhausted (idx ${stageIdx}, tool=${names[0]})`);
+        }
+        return stage[stageIdx++]!;
       }
       if (executerIdx >= script.executer.length) {
         throw new Error(`scripted executer exhausted (idx ${executerIdx})`);
@@ -73,7 +80,7 @@ describe('runV5 — end-to-end scripted happy path', () => {
     const gameDir = resolve(root, 'game');
     await mkdir(gameDir, { recursive: true });
 
-    const writerJson = JSON.stringify({
+    const writerInput = {
       scenes: [
         {
           location: 'classroom',
@@ -84,8 +91,8 @@ describe('runV5 — end-to-end scripted happy path', () => {
           ],
         },
       ],
-    });
-    const storyboardJson = JSON.stringify({
+    };
+    const storyboardInput = {
       shots: [
         {
           shotNumber: 1,
@@ -101,6 +108,11 @@ describe('runV5 — end-to-end scripted happy path', () => {
           ],
         },
       ],
+    };
+    const stageToolUse = (name: string, input: Record<string, unknown>): LlmToolChatResponse => ({
+      content: [{ type: 'tool_use', id: `stage_${name}`, name, input }],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 1, outputTokens: 1 },
     });
 
     const llm = scriptedLlm({
@@ -212,11 +224,11 @@ describe('runV5 — end-to-end scripted happy path', () => {
           taskSummary: 'qa done (skipped, no sdk)',
         }),
       ],
-      chatOutputs: [
+      stage: [
         // runWriter call (from draft_script)
-        '```json\n' + writerJson + '\n```',
+        stageToolUse('emit_writer_output', writerInput),
         // runStoryboarder call (from condense_to_shots)
-        '```json\n' + storyboardJson + '\n```',
+        stageToolUse('emit_storyboarder_output', storyboardInput),
       ],
     });
 

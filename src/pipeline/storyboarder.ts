@@ -1,8 +1,6 @@
-import type { LlmClient } from '../llm/types.js';
-import { extractJsonBlock } from '../llm/claude-client.js';
-import { retryJsonParse } from '../llm/retry.js';
+import type { LlmClient, LlmToolUseBlock } from '../llm/types.js';
+import { retryOnStageValidationError } from '../llm/retry.js';
 import { wrapParseError } from '../llm/stage-parse-error.js';
-import { repairCjkInnerQuotes } from '../llm/json-repair.js';
 import type { PlannerOutput, StoryboarderOutput, WriterOutput } from './types.js';
 
 const STORYBOARDER_SYSTEM = `You are the Storyboarder for a Ren'Py galgame Stage-A playable demo.
@@ -31,37 +29,84 @@ sprites + transforms cannot sell:
   Stage A placeholder rendering (the Coder shows a black screen + caption until the real
   video is ready).
 
-Return ONLY a JSON object inside a \`\`\`json fence, matching:
-\`\`\`typescript
-interface StoryboarderOutput {
-  shots: Array<{
-    shotNumber: number;          // 1-indexed, contiguous
-    description: string;         // one sentence describing the shot's intent
-    characters: Array<string>;   // subset of planner.characters[].name
-    sceneName: string;           // one of planner.scenes[].name
-    staging: string;             // short phrase, see verbs above
-    transforms: string;          // short phrase, see verbs above
-    transition: string;          // fade | dissolve | none
-    effects?: string;            // optional short phrase
-    cutscene?: {                 // optional video beat; omit entirely when not needed
-      kind: "transition" | "reference";
-      motionPrompt: string;      // one-sentence description of the camera / subject motion
-      referenceSceneName?: string;    // one of planner.scenes[].name
-      referenceCharacterName?: string; // for kind="reference" only
-    };
-    dialogueLines: Array<{       // 1-6 lines per shot
-      speaker: string;           // character name, or "narrator"
-      text: string;
-    }>;
-  }>;
-}
-\`\`\`
 Shots must be non-empty, contiguously numbered starting at 1, and <= 8 total.
-No prose outside the fence.
 
-CRITICAL: If a dialogue line or description needs quoted speech inside it, use
-Chinese full-width quotes 「」 or 『』, NOT raw ASCII double quotes. Raw inner
-\`"\` breaks JSON parsing.`;
+Call the tool \`emit_storyboarder_output\` exactly once with the structured shots. No prose.`;
+
+const STORYBOARDER_TOOL_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    shots: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 8,
+      items: {
+        type: 'object',
+        properties: {
+          shotNumber: { type: 'integer', minimum: 1, description: '1-indexed, contiguous' },
+          description: {
+            type: 'string',
+            description: "one sentence describing the shot's intent",
+          },
+          characters: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'subset of planner.characters[].name',
+          },
+          sceneName: {
+            type: 'string',
+            description: 'one of planner.scenes[].name',
+          },
+          staging: { type: 'string', description: 'short phrase; see verb list in system prompt' },
+          transforms: {
+            type: 'string',
+            description: 'short phrase; see verb list in system prompt',
+          },
+          transition: {
+            type: 'string',
+            enum: ['fade', 'dissolve', 'none'],
+          },
+          effects: { type: 'string', description: 'optional short phrase' },
+          cutscene: {
+            type: 'object',
+            description: 'Only present when the shot genuinely needs a motion video beat.',
+            properties: {
+              kind: { type: 'string', enum: ['transition', 'reference'] },
+              motionPrompt: { type: 'string' },
+              referenceSceneName: { type: 'string' },
+              referenceCharacterName: { type: 'string' },
+            },
+            required: ['kind', 'motionPrompt'],
+          },
+          dialogueLines: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 6,
+            items: {
+              type: 'object',
+              properties: {
+                speaker: { type: 'string' },
+                text: { type: 'string' },
+              },
+              required: ['speaker', 'text'],
+            },
+          },
+        },
+        required: [
+          'shotNumber',
+          'description',
+          'characters',
+          'sceneName',
+          'staging',
+          'transforms',
+          'transition',
+          'dialogueLines',
+        ],
+      },
+    },
+  },
+  required: ['shots'],
+} as const;
 
 export interface RunStoryboarderParams {
   readonly planner: PlannerOutput;
@@ -72,6 +117,10 @@ export interface RunStoryboarderParams {
 export async function runStoryboarder(
   params: RunStoryboarderParams,
 ): Promise<StoryboarderOutput> {
+  if (!params.llm.chatWithTools) {
+    throw new Error('runStoryboarder requires an LlmClient that supports chatWithTools.');
+  }
+
   const userMsg = [
     'PLANNER OUTPUT:',
     '```json',
@@ -83,44 +132,53 @@ export async function runStoryboarder(
     JSON.stringify(params.writer, null, 2),
     '```',
     '',
-    'Now produce StoryboarderOutput with at most 8 shots.',
+    'Now emit the storyboard (<= 8 shots) by calling emit_storyboarder_output.',
   ].join('\n');
 
-  return retryJsonParse({
+  return retryOnStageValidationError({
     attempt: async () => {
-      const res = await params.llm.chat({
+      const res = await params.llm.chatWithTools!({
         messages: [
           { role: 'system', content: STORYBOARDER_SYSTEM },
           { role: 'user', content: userMsg },
+        ],
+        tools: [
+          {
+            name: 'emit_storyboarder_output',
+            description: 'Emit the StoryboarderOutput as a single structured tool call.',
+            inputSchema: STORYBOARDER_TOOL_INPUT_SCHEMA as unknown as Record<string, unknown>,
+          },
         ],
         temperature: 0.6,
         maxTokens: 6000,
       });
       try {
-        const json = extractJsonBlock(res.content);
-        const parsed = tryParseWithRepair<StoryboarderOutput>(json);
+        const parsed = extractToolInput(res.content, 'emit_storyboarder_output');
         assertStoryboarderOutput(parsed);
         return parsed;
       } catch (e) {
-        throw wrapParseError(e, res.content);
+        throw wrapParseError(e, JSON.stringify(res.content));
       }
     },
     onRetry: (err, attempt) => {
-      console.warn(`[storyboarder] attempt ${attempt} produced invalid output (${err.message}); retrying...`);
+      console.warn(
+        `[storyboarder] attempt ${attempt} produced invalid output (${err.message}); retrying...`,
+      );
     },
   });
 }
 
-function tryParseWithRepair<T>(json: string): T {
-  try {
-    return JSON.parse(json) as T;
-  } catch (firstErr) {
-    const repaired = repairCjkInnerQuotes(json);
-    if (repaired !== json) {
-      return JSON.parse(repaired) as T;
-    }
-    throw firstErr;
+function extractToolInput(
+  content: ReadonlyArray<{ type: string }>,
+  toolName: string,
+): unknown {
+  const toolUse = content.find(
+    (b): b is LlmToolUseBlock => b.type === 'tool_use' && (b as LlmToolUseBlock).name === toolName,
+  );
+  if (!toolUse) {
+    throw new Error(`LLM did not call tool ${toolName}`);
   }
+  return toolUse.input;
 }
 
 function assertStoryboarderOutput(

@@ -200,6 +200,11 @@ function translateMessageContent(
   });
 }
 
+/**
+ * @deprecated v0.7: pipeline stages now use `chatWithTools` + structured tool
+ * inputs, so JSON fence extraction is no longer needed. External callers that
+ * still parse free-form LLM JSON may keep using this; it will be removed in v0.8.
+ */
 export function extractJsonBlock(response: string): string {
   const fenceMatch = response.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
   if (fenceMatch) {

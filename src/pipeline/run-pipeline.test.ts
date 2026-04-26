@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { LlmClient, LlmChatParams, LlmResponse } from '../llm/types.js';
+import type {
+  LlmClient,
+  LlmChatParams,
+  LlmResponse,
+  LlmToolChatParams,
+  LlmToolChatResponse,
+} from '../llm/types.js';
 import type {
   RunningHubClient,
   RunningHubSubmitParams,
@@ -43,22 +49,80 @@ const STORYBOARDER_JSON = {
   ],
 };
 
+/**
+ * Scripted LLM that responds to `chatWithTools` with a canned tool_use input
+ * keyed by the tool name in the current request. For pipeline stages this means
+ * the same queue entry { tool: 'emit_planner_output', input: PLANNER_JSON } drives
+ * `runPlanner`, regardless of order. `chat()` is still used by a handful of
+ * non-pipeline call-sites in older tests, so we keep a text-response queue too.
+ */
+type ToolEntry =
+  | { kind: 'ok'; tool: string; input: Record<string, unknown> }
+  | { kind: 'malformed'; tool: string; text: string };
+
 class ScriptedLlm implements LlmClient {
-  private readonly queue: string[];
-  public readonly calls: LlmChatParams[] = [];
+  public readonly calls: LlmToolChatParams[] = [];
+  private readonly queue: ToolEntry[];
 
-  constructor(queue: string[]) { this.queue = [...queue]; }
+  constructor(queue: ToolEntry[]) { this.queue = [...queue]; }
 
-  async chat(params: LlmChatParams): Promise<LlmResponse> {
+  async chat(_params: LlmChatParams): Promise<LlmResponse> {
+    throw new Error('ScriptedLlm.chat() is no longer used; pipeline stages use chatWithTools');
+  }
+
+  async chatWithTools(params: LlmToolChatParams): Promise<LlmToolChatResponse> {
     this.calls.push(params);
+    const expected = params.tools[0]?.name ?? '';
     const next = this.queue.shift();
-    if (next === undefined) throw new Error('ScriptedLlm ran out of canned responses');
-    return { content: next, usage: { inputTokens: 0, outputTokens: 0 } };
+    if (!next) throw new Error(`ScriptedLlm ran out of canned responses (wanted ${expected})`);
+    if (next.tool !== expected) {
+      throw new Error(
+        `ScriptedLlm expected tool=${expected} but queue head is tool=${next.tool}`,
+      );
+    }
+    if (next.kind === 'malformed') {
+      // Simulate the LLM returning text instead of calling the tool.
+      return {
+        content: [{ type: 'text', text: next.text }],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 0, outputTokens: 0 },
+      };
+    }
+    return {
+      content: [{ type: 'tool_use', id: `tu_${this.calls.length}`, name: next.tool, input: next.input }],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
   }
 }
 
-function wrapJson(obj: unknown): string {
-  return '```json\n' + JSON.stringify(obj) + '\n```';
+function plannerOk(input: Record<string, unknown> = PLANNER_JSON): ToolEntry {
+  return { kind: 'ok', tool: 'emit_planner_output', input };
+}
+function writerOk(input: Record<string, unknown> = WRITER_JSON): ToolEntry {
+  return { kind: 'ok', tool: 'emit_writer_output', input };
+}
+function storyboarderOk(input: Record<string, unknown> = STORYBOARDER_JSON): ToolEntry {
+  return { kind: 'ok', tool: 'emit_storyboarder_output', input };
+}
+function storyboarderBad(): ToolEntry {
+  // Simulate LLM skipping the tool call — runStoryboarder will throw
+  // "LLM did not call tool emit_storyboarder_output", which is retriable.
+  return { kind: 'malformed', tool: 'emit_storyboarder_output', text: 'no tool call' };
+}
+function uiDesignOk(headerText: string): ToolEntry {
+  return {
+    kind: 'ok',
+    tool: 'emit_ui_design',
+    input: {
+      headerText,
+      buttons: [
+        { label: 'Start', action: 'Start()' },
+        { label: 'Quit', action: 'Quit(confirm=False)' },
+      ],
+      bgColor: '#ffe7f0',
+    },
+  };
 }
 
 describe('runPipeline', () => {
@@ -69,9 +133,9 @@ describe('runPipeline', () => {
       // Planner's schema is loaded relative to planner.ts via import.meta.url, so it
       // transparently reads from the real src/schema — no setup needed in tmp.
       const llm = new ScriptedLlm([
-        wrapJson(PLANNER_JSON),
-        wrapJson(WRITER_JSON),
-        wrapJson(STORYBOARDER_JSON),
+        plannerOk(),
+        writerOk(),
+        storyboarderOk(),
       ]);
 
       const result = await runPipeline({
@@ -104,17 +168,11 @@ describe('runPipeline', () => {
   it('runs the audio-ui stage when enableAudioUi=true, tolerating single failures', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'renpy-audioui-'));
     try {
-      const UI_PATCH = [
-        '# --- ui-patch: main_menu (mood: soft pastel visual-novel menu) ---',
-        'screen main_menu():',
-        '    tag menu',
-        '    add Solid("#ffe7f0")',
-      ].join('\n');
       const llm = new ScriptedLlm([
-        wrapJson(PLANNER_JSON),
-        wrapJson(WRITER_JSON),
-        wrapJson(STORYBOARDER_JSON),
-        UI_PATCH, // the 4th call is the UI designer (no JSON fence)
+        plannerOk(),
+        writerOk(),
+        storyboarderOk(),
+        uiDesignOk('Test Night'),
       ]);
 
       // One BGM per scene (1), voice lines up to 5 (we have 1 non-narrator line
@@ -201,10 +259,10 @@ describe('runPipeline', () => {
     try {
       // Feed a bad storyboarder response twice so runStoryboarder exhausts retries.
       const llm = new ScriptedLlm([
-        wrapJson(PLANNER_JSON),
-        wrapJson(WRITER_JSON),
-        '```json\n{ not valid json\n```',
-        '```json\n{ still not valid\n```',
+        plannerOk(),
+        writerOk(),
+        storyboarderBad(),
+        storyboarderBad(),
       ]);
 
       await expect(
@@ -238,10 +296,10 @@ describe('runPipeline', () => {
     try {
       // First run: seed planner + writer snapshots via a failing storyboarder.
       const firstLlm = new ScriptedLlm([
-        wrapJson(PLANNER_JSON),
-        wrapJson(WRITER_JSON),
-        '```json\n{ not json\n```',
-        '```json\n{ not json\n```',
+        plannerOk(),
+        writerOk(),
+        storyboarderBad(),
+        storyboarderBad(),
       ]);
       await expect(
         runPipeline({
@@ -256,7 +314,7 @@ describe('runPipeline', () => {
       expect(firstLlm.calls).toHaveLength(4);
 
       // Second run with resume=true: only storyboarder should be called.
-      const secondLlm = new ScriptedLlm([wrapJson(STORYBOARDER_JSON)]);
+      const secondLlm = new ScriptedLlm([storyboarderOk()]);
       const result = await runPipeline({
         inspiration: 'x',
         storyName: 'resume-story',
@@ -274,7 +332,7 @@ describe('runPipeline', () => {
   });
 
   it('throws when enableAudioUi is set but runningHubClient is missing', async () => {
-    const llm = new ScriptedLlm([wrapJson(PLANNER_JSON), wrapJson(WRITER_JSON), wrapJson(STORYBOARDER_JSON)]);
+    const llm = new ScriptedLlm([plannerOk(), writerOk(), storyboarderOk()]);
     await expect(
       runPipeline({
         inspiration: 'x',

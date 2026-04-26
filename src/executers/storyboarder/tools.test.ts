@@ -6,7 +6,7 @@ import type { CommonToolContext } from '../../agents/common-tools.js';
 import { storyboarderTools } from './tools.js';
 import { writeWorkspaceDoc } from '../../agents/workspace-io.js';
 
-async function makeCtx(llmChat: any): Promise<CommonToolContext> {
+async function makeCtx(llm: any): Promise<CommonToolContext> {
   const root = await mkdtemp(resolve(tmpdir(), 'v5-storyboarder-'));
   const gameDir = resolve(root, 'game');
   await mkdir(gameDir, { recursive: true });
@@ -16,7 +16,7 @@ async function makeCtx(llmChat: any): Promise<CommonToolContext> {
     workspaceDir: resolve(root, 'workspace'),
     memoryDir: resolve(root, 'memory'),
     taskAgents: {},
-    llm: { chat: llmChat } as any,
+    llm,
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   };
 }
@@ -37,11 +37,19 @@ describe('storyboarder.condense_to_shots', () => {
         },
       ],
     };
-    const chat = vi.fn().mockResolvedValue({
-      content: '```json\n' + JSON.stringify(storyboardJson) + '\n```',
+    const chatWithTools = vi.fn().mockResolvedValue({
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tu_1',
+          name: 'emit_storyboarder_output',
+          input: storyboardJson,
+        },
+      ],
+      stopReason: 'tool_use',
       usage: { inputTokens: 1, outputTokens: 1 },
     });
-    const ctx = await makeCtx(chat);
+    const ctx = await makeCtx({ chat: vi.fn(), chatWithTools });
 
     await writeWorkspaceDoc('workspace://project', ctx.gameDir, {
       title: 'T',
@@ -77,7 +85,7 @@ describe('storyboarder.condense_to_shots', () => {
   });
 
   it('errors when script is missing', async () => {
-    const ctx = await makeCtx(vi.fn());
+    const ctx = await makeCtx({ chat: vi.fn(), chatWithTools: vi.fn() });
     const res = await storyboarderTools.executors.condense_to_shots!({}, ctx);
     expect(res).toMatchObject({ error: expect.stringMatching(/script/i) });
   });

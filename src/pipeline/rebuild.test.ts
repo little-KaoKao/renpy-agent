@@ -133,17 +133,19 @@ describe('rebuildGameProject', () => {
     expect(screens).toContain('add Solid("#ffe7f0")');
   });
 
-  it('drops invalid ui patches (e.g. font override) and still produces a runnable project', async () => {
+  it('drops invalid ui patches (wrong screen header) and still produces a runnable project', async () => {
+    // v0.7: UI patches are always produced by the deterministic renderer, so the
+    // "LLM smuggles init python" vector is structurally impossible. The only
+    // validation the merger still does is "first code line starts with `screen X`",
+    // matching the target screen. A patch whose header mismatches is dropped.
     const runtimeRoot = join(dir, 'runtime');
     const gameDir = await seedWorkspace(runtimeRoot, 'demo');
     const paths = workspacePathsForGame(gameDir);
     await mkdir(paths.workspaceDir, { recursive: true });
     const badPatch = [
       '# --- ui-patch: main_menu (mood: pastel) ---',
-      'screen main_menu():',
+      'screen save_load():',
       '    tag menu',
-      '    text "Title":',
-      '        font "gui/font/NotoSansCJK-Regular.ttc"',
     ].join('\n');
     await writeFile(
       paths.uiPath,
@@ -156,8 +158,7 @@ describe('rebuildGameProject', () => {
     await rebuildGameProject({ storyName: 'demo', runtimeRoot, repoRoot: dir });
 
     const screens = await readFile(join(gameDir, 'screens.rpy'), 'utf8');
-    // Invalid patch dropped — screens.rpy falls back to the plain template.
     expect(screens).not.toContain('# === renpy-agent UI patch: main_menu ===');
-    expect(screens).not.toContain('NotoSansCJK');
+    expect(screens).not.toContain('screen save_load():');
   });
 });

@@ -6,7 +6,7 @@ import type { CommonToolContext } from '../../agents/common-tools.js';
 import { writerTools } from './tools.js';
 import { writeWorkspaceDoc } from '../../agents/workspace-io.js';
 
-async function makeCtx(llmChat: any): Promise<CommonToolContext & { llm: any }> {
+async function makeCtx(llm: any): Promise<CommonToolContext & { llm: any }> {
   const root = await mkdtemp(resolve(tmpdir(), 'v5-writer-'));
   const gameDir = resolve(root, 'game');
   await mkdir(gameDir, { recursive: true });
@@ -16,29 +16,34 @@ async function makeCtx(llmChat: any): Promise<CommonToolContext & { llm: any }> 
     workspaceDir: resolve(root, 'workspace'),
     memoryDir: resolve(root, 'memory'),
     taskAgents: {},
-    llm: { chat: llmChat },
+    llm,
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   };
 }
 
 describe('writer.draft_script', () => {
   it('assembles PlannerOutput from workspace, calls runWriter via injected llm, and persists WriterOutput', async () => {
-    const chat = vi.fn().mockResolvedValue({
-      content:
-        '```json\n' +
-        JSON.stringify({
-          scenes: [
-            {
-              location: 'classroom',
-              characters: ['Baiying'],
-              lines: [{ speaker: 'Baiying', text: 'hi' }],
-            },
-          ],
-        }) +
-        '\n```',
+    const chatWithTools = vi.fn().mockResolvedValue({
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tu_1',
+          name: 'emit_writer_output',
+          input: {
+            scenes: [
+              {
+                location: 'classroom',
+                characters: ['Baiying'],
+                lines: [{ speaker: 'Baiying', text: 'hi' }],
+              },
+            ],
+          },
+        },
+      ],
+      stopReason: 'tool_use',
       usage: { inputTokens: 1, outputTokens: 1 },
     });
-    const ctx = await makeCtx(chat);
+    const ctx = await makeCtx({ chat: vi.fn(), chatWithTools });
 
     await writeWorkspaceDoc('workspace://project', ctx.gameDir, {
       title: 'T',
@@ -75,7 +80,7 @@ describe('writer.draft_script', () => {
     );
 
     expect(res).toMatchObject({ uri: 'workspace://script' });
-    expect(chat).toHaveBeenCalledTimes(1);
+    expect(chatWithTools).toHaveBeenCalledTimes(1);
 
     const doc = JSON.parse(
       await readFile(resolve(ctx.gameDir, '..', 'workspace', 'script.json'), 'utf8'),
@@ -85,7 +90,7 @@ describe('writer.draft_script', () => {
   });
 
   it('errors when chapter is missing', async () => {
-    const ctx = await makeCtx(vi.fn());
+    const ctx = await makeCtx({ chat: vi.fn(), chatWithTools: vi.fn() });
     const res = await writerTools.executors.draft_script!(
       { chapterUri: 'workspace://chapter', characterUris: [], sceneUris: [] },
       ctx,
