@@ -84,7 +84,7 @@ export async function runWriter(params: RunWriterParams): Promise<WriterOutput> 
     attempt: async () => {
       const res = await params.llm.chatWithTools!({
         messages: [
-          { role: 'system', content: WRITER_SYSTEM },
+          { role: 'system', content: WRITER_SYSTEM, cacheControl: { type: 'ephemeral' } },
           { role: 'user', content: userMsg },
         ],
         tools: [

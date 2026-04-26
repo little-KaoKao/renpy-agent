@@ -292,6 +292,260 @@ describe('resolveClaudeMode', () => {
   });
 });
 
+describe('ClaudeLlmClient prompt caching', () => {
+  function longText(minChars: number): string {
+    // 足以越过 PROMPT_CACHE_MIN_CHARS(1024 * 4 = 4096 chars)门槛的内容
+    return 'schema-block '.repeat(Math.ceil(minChars / 12));
+  }
+
+  function makeCacheAwareClient() {
+    const create = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: 'ok' }],
+      usage: {
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_creation_input_tokens: 3000,
+        cache_read_input_tokens: 0,
+      },
+    });
+    return { create, client: { messages: { create } } };
+  }
+
+  it('emits cache_control on cacheable segment when direct mode + long enough', async () => {
+    const { create, client } = makeCacheAwareClient();
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'direct' });
+
+    const bigSys = longText(4096);
+    await llm.chat({
+      messages: [
+        { role: 'system', content: bigSys, cacheControl: { type: 'ephemeral' } },
+        { role: 'system', content: 'dynamic tail' },
+        { role: 'user', content: 'go' },
+      ],
+    });
+
+    const call = create.mock.calls[0]![0];
+    expect(Array.isArray(call.system)).toBe(true);
+    expect(call.system[0]).toEqual({
+      type: 'text',
+      text: bigSys,
+      cache_control: { type: 'ephemeral' },
+    });
+    expect(call.system[1]).toEqual({ type: 'text', text: 'dynamic tail' });
+  });
+
+  it('skips cache_control when text is shorter than 1024-token floor', async () => {
+    const { create, client } = makeCacheAwareClient();
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'direct' });
+
+    await llm.chat({
+      messages: [
+        { role: 'system', content: 'short', cacheControl: { type: 'ephemeral' } },
+        { role: 'user', content: 'hi' },
+      ],
+    });
+
+    // 没有任何一段拿到 cache_control,降级为 string。
+    const call = create.mock.calls[0]![0];
+    expect(typeof call.system).toBe('string');
+    expect(call.system).toBe('short');
+  });
+
+  it('strips cache_control on bedrock unless CLAUDE_BEDROCK_CACHE=1', async () => {
+    const { create, client } = makeCacheAwareClient();
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'bedrock' });
+
+    const bigSys = longText(4096);
+    const prev = process.env.CLAUDE_BEDROCK_CACHE;
+    delete process.env.CLAUDE_BEDROCK_CACHE;
+    try {
+      await llm.chat({
+        messages: [
+          { role: 'system', content: bigSys, cacheControl: { type: 'ephemeral' } },
+          { role: 'user', content: 'go' },
+        ],
+      });
+    } finally {
+      if (prev !== undefined) process.env.CLAUDE_BEDROCK_CACHE = prev;
+    }
+
+    const call = create.mock.calls[0]![0];
+    // Bedrock 默认 strip → 字符串降级路径,不含 cache_control
+    expect(typeof call.system).toBe('string');
+    expect(call.system).toBe(bigSys);
+  });
+
+  it('respects CLAUDE_BEDROCK_CACHE=1 opt-in on bedrock', async () => {
+    const { create, client } = makeCacheAwareClient();
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'bedrock' });
+
+    const bigSys = longText(4096);
+    const prev = process.env.CLAUDE_BEDROCK_CACHE;
+    process.env.CLAUDE_BEDROCK_CACHE = '1';
+    try {
+      await llm.chat({
+        messages: [
+          { role: 'system', content: bigSys, cacheControl: { type: 'ephemeral' } },
+          { role: 'user', content: 'go' },
+        ],
+      });
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_BEDROCK_CACHE;
+      else process.env.CLAUDE_BEDROCK_CACHE = prev;
+    }
+
+    const call = create.mock.calls[0]![0];
+    expect(Array.isArray(call.system)).toBe(true);
+    expect(call.system[0].cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('CLAUDE_DISABLE_CACHE=1 overrides everything', async () => {
+    const { create, client } = makeCacheAwareClient();
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'direct' });
+
+    const bigSys = longText(4096);
+    const prev = process.env.CLAUDE_DISABLE_CACHE;
+    process.env.CLAUDE_DISABLE_CACHE = '1';
+    try {
+      await llm.chat({
+        messages: [
+          { role: 'system', content: bigSys, cacheControl: { type: 'ephemeral' } },
+          { role: 'user', content: 'go' },
+        ],
+      });
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_DISABLE_CACHE;
+      else process.env.CLAUDE_DISABLE_CACHE = prev;
+    }
+
+    const call = create.mock.calls[0]![0];
+    expect(typeof call.system).toBe('string');
+  });
+
+  it('forwards cache_creation / cache_read usage fields through LlmResponse', async () => {
+    const create = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: 'ok' }],
+      usage: {
+        input_tokens: 42,
+        output_tokens: 7,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 3500,
+      },
+    });
+    const llm = new ClaudeLlmClient({
+      client: { messages: { create } } as any,
+      mode: 'direct',
+    });
+
+    const res = await llm.chat({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(res.usage.cacheReadInputTokens).toBe(3500);
+    expect(res.usage.cacheCreationInputTokens).toBe(0);
+  });
+
+  it('omits cache usage fields when SDK returns null', async () => {
+    const create = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: 'ok' }],
+      usage: {
+        input_tokens: 42,
+        output_tokens: 7,
+        cache_creation_input_tokens: null,
+        cache_read_input_tokens: null,
+      },
+    });
+    const llm = new ClaudeLlmClient({
+      client: { messages: { create } } as any,
+      mode: 'direct',
+    });
+
+    const res = await llm.chat({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(res.usage.cacheReadInputTokens).toBeUndefined();
+    expect(res.usage.cacheCreationInputTokens).toBeUndefined();
+  });
+
+  it('does NOT request cache_control by default (backward compat: plain string system)', async () => {
+    const { create, client } = makeCacheAwareClient();
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'direct' });
+
+    const bigSys = longText(4096);
+    await llm.chat({
+      messages: [
+        { role: 'system', content: bigSys }, // 没挂 cacheControl
+        { role: 'user', content: 'go' },
+      ],
+    });
+
+    const call = create.mock.calls[0]![0];
+    // 和改造前完全一致:合并后的 plain string system
+    expect(typeof call.system).toBe('string');
+    expect(call.system).toBe(bigSys);
+  });
+});
+
+describe('ClaudeLlmClient.chatWithTools prompt caching', () => {
+  function longText(minChars: number): string {
+    return 'executer-rule '.repeat(Math.ceil(minChars / 13));
+  }
+
+  it('emits cache_control on cacheable tool-chat system segment', async () => {
+    const create = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: 'done' }],
+      stop_reason: 'end_turn',
+      usage: {
+        input_tokens: 5,
+        output_tokens: 7,
+        cache_creation_input_tokens: 3000,
+        cache_read_input_tokens: 0,
+      },
+    });
+    const llm = new ClaudeLlmClient({
+      client: { messages: { create } } as any,
+      mode: 'direct',
+    });
+
+    const bigSys = longText(4096);
+    await llm.chatWithTools({
+      messages: [
+        { role: 'system', content: bigSys, cacheControl: { type: 'ephemeral' } },
+        { role: 'system', content: 'task-specific' },
+        { role: 'user', content: 'kick off' },
+      ],
+      tools: [],
+    });
+
+    const call = create.mock.calls[0]![0];
+    expect(Array.isArray(call.system)).toBe(true);
+    expect(call.system[0].cache_control).toEqual({ type: 'ephemeral' });
+    expect(call.system[1]).toEqual({ type: 'text', text: 'task-specific' });
+  });
+
+  it('forwards cache usage fields through LlmToolChatResponse', async () => {
+    const create = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: 'done' }],
+      stop_reason: 'end_turn',
+      usage: {
+        input_tokens: 5,
+        output_tokens: 7,
+        cache_creation_input_tokens: 2048,
+        cache_read_input_tokens: 1024,
+      },
+    });
+    const llm = new ClaudeLlmClient({
+      client: { messages: { create } } as any,
+      mode: 'direct',
+    });
+
+    const res = await llm.chatWithTools({
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+    });
+
+    expect(res.usage.cacheCreationInputTokens).toBe(2048);
+    expect(res.usage.cacheReadInputTokens).toBe(1024);
+  });
+});
+
 describe('extractJsonBlock', () => {
   it('extracts from ```json fence', () => {
     const raw = 'blah\n```json\n{"a":1}\n```\nafter';

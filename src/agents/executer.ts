@@ -138,7 +138,9 @@ export async function runExecuterTask(
     ...set.executors,
   };
 
-  const systemPrompt = [
+  // Cacheable static segment:7 rules + POC identity + role-specific tool-set
+  // 说明。对同一个 pocRole 的每次 handoff 都一样,天然适合 prompt cache。
+  const cacheableSystemPrompt = [
     EXECUTER_SYSTEM_PROMPT,
     '',
     `Your role: ${poc.role}`,
@@ -149,7 +151,7 @@ export async function runExecuterTask(
   ].join('\n');
 
   const messages: LlmToolMessage[] = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: cacheableSystemPrompt, cacheControl: { type: 'ephemeral' } },
     { role: 'user', content: params.userBrief },
   ];
 

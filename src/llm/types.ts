@@ -1,11 +1,24 @@
+/**
+ * Opt-in cache marker for system messages. Caller requests ephemeral prompt
+ * caching on this block; the transport decides whether to actually emit
+ * `cache_control` (see `claude-client.ts` for token-floor / Bedrock / env
+ * overrides that can strip it).
+ */
+export interface LlmCacheControl {
+  readonly type: 'ephemeral';
+}
+
 export interface LlmMessage {
   readonly role: 'system' | 'user' | 'assistant';
   readonly content: string;
+  readonly cacheControl?: LlmCacheControl;
 }
 
 export interface LlmUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
+  readonly cacheCreationInputTokens?: number;
+  readonly cacheReadInputTokens?: number;
 }
 
 export interface LlmResponse {
@@ -48,6 +61,8 @@ export type LlmUserContent = string | ReadonlyArray<LlmTextBlock | LlmToolResult
 export interface LlmToolMessage {
   readonly role: 'system' | 'user' | 'assistant';
   readonly content: string | ReadonlyArray<LlmTextBlock | LlmToolUseBlock | LlmToolResultBlock>;
+  /** Only meaningful on system messages. Ignored elsewhere. */
+  readonly cacheControl?: LlmCacheControl;
 }
 
 export interface LlmToolSchema {

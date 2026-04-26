@@ -139,7 +139,7 @@ export async function runStoryboarder(
     attempt: async () => {
       const res = await params.llm.chatWithTools!({
         messages: [
-          { role: 'system', content: STORYBOARDER_SYSTEM },
+          { role: 'system', content: STORYBOARDER_SYSTEM, cacheControl: { type: 'ephemeral' } },
           { role: 'user', content: userMsg },
         ],
         tools: [
