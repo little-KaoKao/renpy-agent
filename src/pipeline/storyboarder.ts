@@ -90,7 +90,7 @@ export async function runStoryboarder(
     attempt: async () => {
       const res = await params.llm.chat({
         messages: [
-          { role: 'system', content: STORYBOARDER_SYSTEM },
+          { role: 'system', content: STORYBOARDER_SYSTEM, cacheControl: { type: 'ephemeral' } },
           { role: 'user', content: userMsg },
         ],
         temperature: 0.6,

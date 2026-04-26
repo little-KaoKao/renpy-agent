@@ -129,9 +129,11 @@ export async function runPlannerTask(
   const index = await buildWorkspaceIndex(params.ctx.gameDir);
   const memories = await loadPlannerMemories(params.ctx.memoryDir);
 
-  const systemPrompt = buildPlannerSystemPrompt(params.storyName, index, memories);
+  // 分两段 system:第一段是 bytewise 恒定的 Planner 7 条规则(适合 prompt cache),
+  // 第二段是 storyName / workspace index / memories(每轮都在变,不打 cache)。
   const messages: LlmToolMessage[] = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: PLANNER_SYSTEM_PROMPT, cacheControl: { type: 'ephemeral' } },
+    { role: 'system', content: buildPlannerDynamicSegment(params.storyName, index, memories) },
     {
       role: 'user',
       content: `Project "${params.storyName}". Decide the next task to push Stage A forward, or finish if no more tasks are needed.`,
@@ -197,6 +199,11 @@ export async function runPlannerTask(
   throw new Error(`runPlannerTask: exceeded maxTurns=${maxTurns}`);
 }
 
+/**
+ * @deprecated Kept for potential external imports. Prefer using the two-segment
+ * system message (PLANNER_SYSTEM_PROMPT + buildPlannerDynamicSegment) so the
+ * static half can be prompt-cached.
+ */
 function buildPlannerSystemPrompt(
   storyName: string,
   index: WorkspaceIndex,
@@ -205,6 +212,16 @@ function buildPlannerSystemPrompt(
   return [
     PLANNER_SYSTEM_PROMPT,
     '',
+    buildPlannerDynamicSegment(storyName, index, memories),
+  ].join('\n');
+}
+
+function buildPlannerDynamicSegment(
+  storyName: string,
+  index: WorkspaceIndex,
+  memories: ReadonlyArray<PlannerMemoryEntry>,
+): string {
+  return [
     `Project: ${storyName}`,
     '',
     'Current workspace index:',

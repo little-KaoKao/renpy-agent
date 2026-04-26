@@ -53,7 +53,7 @@ export async function runWriter(params: RunWriterParams): Promise<WriterOutput> 
     attempt: async () => {
       const res = await params.llm.chat({
         messages: [
-          { role: 'system', content: WRITER_SYSTEM },
+          { role: 'system', content: WRITER_SYSTEM, cacheControl: { type: 'ephemeral' } },
           { role: 'user', content: userMsg },
         ],
         temperature: 0.7,

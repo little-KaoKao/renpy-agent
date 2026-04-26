@@ -74,7 +74,8 @@ export async function runPlanner(params: RunPlannerParams): Promise<PlannerOutpu
     attempt: async () => {
       const res = await params.llm.chat({
         messages: [
-          { role: 'system', content: system },
+          // 整个 system 字节恒定(schema + 示例),一次跑里每次重试都打得到 cache。
+          { role: 'system', content: system, cacheControl: { type: 'ephemeral' } },
           { role: 'user', content: `INSPIRATION:\n${params.inspiration}` },
         ],
         temperature: 0.7,
