@@ -7,11 +7,15 @@
 //    依赖链保证下游自动生效。
 //  - AssetRegistry:改角色外观 → 把该角色的 character_main 条目转回 `placeholder`
 //    (真资产不能继续用,但占位 bg_X 渲染立即恢复可跑);改对白 / 重排镜头不动 registry。
-//  - 全部返回新的 snapshot 并把三个 JSON 重写一次,由 caller 决定要不要再
-//    `writeGameProject`。
+//
+// v0.7 workspace-unification:
+//  - Per-URI(V5)是**主**,aggregate JSON(v0.2)是兼容层。
+//  - 读取优先 per-URI;找不到才回落 aggregate(老 v0.4 产物兼容)。
+//  - 写入双写:per-URI 每次都写;aggregate 只在原本存在时更新,保持和 per-URI 一致。
 //
 // 这些 helper 不负责调 coder / lint;caller(或后续 CLI)串起来。
 
+import { readFile } from 'node:fs/promises';
 import {
   loadRegistry,
   saveRegistry,
@@ -21,25 +25,151 @@ import {
   type AssetRegistryEntry,
   type AssetRegistryFile,
 } from '../assets/registry.js';
+import { slugForFilename } from '../assets/download.js';
 import { logicalKeyForCharacter } from '../assets/logical-key.js';
+import { readWorkspaceDoc, writeWorkspaceDoc } from '../agents/workspace-io.js';
 import type {
   PlannerOutput,
   PlannerOutputCharacter,
   StoryboarderOutput,
   StoryboarderOutputDialogueLine,
   StoryboarderOutputShot,
+  WriterOutput,
 } from './types.js';
 import {
-  loadStoryWorkspace,
   saveStoryWorkspace,
+  workspacePathsForGame,
   type StoryWorkspaceSnapshot,
 } from './workspace.js';
+
+// Per-URI character document shape (same as the V5 character-designer tool
+// writes). Only `name` / `description` / `visualDescription` are exercised by
+// modify; the other fields are preserved as-is so we don't clobber state set
+// by the image-gen task agents.
+interface CharacterDocFile {
+  readonly name: string;
+  readonly description: string;
+  readonly visualDescription: string;
+  readonly mainImageUri?: string | null;
+  readonly status?: 'ready' | 'placeholder';
+  readonly [k: string]: unknown;
+}
 
 export interface ModifyContext {
   /** `<gameRoot>/game`,和 workspace / asset-registry 同一兄弟位。 */
   readonly gameDir: string;
   /** 允许测试注入时间,默认 `() => new Date()`。 */
   readonly now?: () => Date;
+}
+
+// ---------------------------------------------------------------------------
+// internal: dual-layout IO
+// ---------------------------------------------------------------------------
+
+interface LoadedWorkspace {
+  readonly snapshot: StoryWorkspaceSnapshot;
+  /** Whether the aggregate planner/writer/storyboarder JSONs existed on disk. */
+  readonly hadAggregate: boolean;
+}
+
+async function tryReadJson<T>(path: string): Promise<T | undefined> {
+  try {
+    const text = await readFile(path, 'utf8');
+    return JSON.parse(text) as T;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw e;
+  }
+}
+
+/**
+ * Load both layouts. Aggregate JSON wins for caller-returned snapshots (so the
+ * v0.4 contract is preserved when a legacy project is being modified), but
+ * missing fields fall back to per-URI (so V5-generated projects work too).
+ */
+async function loadWorkspaceForModify(gameDir: string): Promise<LoadedWorkspace> {
+  const paths = workspacePathsForGame(gameDir);
+  const [aggPlanner, aggWriter, aggStoryboarder] = await Promise.all([
+    tryReadJson<PlannerOutput>(paths.plannerPath),
+    tryReadJson<WriterOutput>(paths.writerPath),
+    tryReadJson<StoryboarderOutput>(paths.storyboarderPath),
+  ]);
+  const hadAggregate = !!(aggPlanner && aggWriter && aggStoryboarder);
+
+  // Per-URI reads are best-effort; used to fill gaps left by the aggregate layer.
+  const planner = aggPlanner ?? (await assemblePlannerFromPerUri(gameDir));
+  const writer =
+    aggWriter ?? (await readWorkspaceDoc<WriterOutput>('workspace://script', gameDir));
+  const storyboarder =
+    aggStoryboarder ??
+    (await readWorkspaceDoc<StoryboarderOutput>('workspace://storyboard', gameDir));
+
+  if (!planner || !writer || !storyboarder) {
+    throw new Error(
+      `loadWorkspaceForModify: could not reconstruct workspace snapshot at ${gameDir}. ` +
+        'Neither aggregate JSON nor per-URI docs are complete.',
+    );
+  }
+  return { snapshot: { planner, writer, storyboarder }, hadAggregate };
+}
+
+async function assemblePlannerFromPerUri(gameDir: string): Promise<PlannerOutput | undefined> {
+  const project = await readWorkspaceDoc<{
+    title?: string;
+    genre?: string;
+    tone?: string;
+  }>('workspace://project', gameDir);
+  const chapter = await readWorkspaceDoc<{ outline?: string }>('workspace://chapter', gameDir);
+  if (!project || !chapter) return undefined;
+
+  const { listWorkspaceCollection } = await import('../agents/workspace-io.js');
+  const characters: PlannerOutputCharacter[] = [];
+  for (const e of await listWorkspaceCollection('character', gameDir)) {
+    const doc = await readWorkspaceDoc<CharacterDocFile>(e.uri, gameDir);
+    if (doc) {
+      characters.push({
+        name: doc.name,
+        description: doc.description,
+        visualDescription: doc.visualDescription,
+      });
+    }
+  }
+  const scenes: Array<{ name: string; description: string }> = [];
+  for (const e of await listWorkspaceCollection('scene', gameDir)) {
+    const doc = await readWorkspaceDoc<{ name: string; description: string }>(e.uri, gameDir);
+    if (doc) scenes.push({ name: doc.name, description: doc.description });
+  }
+
+  return {
+    projectTitle: project.title ?? '',
+    genre: project.genre ?? '',
+    tone: project.tone ?? '',
+    characters,
+    scenes,
+    chapterOutline: chapter.outline ?? '',
+  };
+}
+
+/**
+ * Resolve a character URI by name. Primary: new slug via `slugForFilename`.
+ * Fallback: the v0.6 legacy literal `'asset'` slug that pure-CJK names used
+ * to collapse into; only probed when the primary path doesn't exist.
+ */
+async function resolveCharacterDocUri(
+  gameDir: string,
+  characterName: string,
+): Promise<{ uri: string; doc: CharacterDocFile } | undefined> {
+  const primary = `workspace://character/${slugForFilename(characterName)}`;
+  const primaryDoc = await readWorkspaceDoc<CharacterDocFile>(primary, gameDir);
+  if (primaryDoc) return { uri: primary, doc: primaryDoc };
+
+  // Legacy fallback: pre-hardening, every non-ASCII name collapsed to 'asset'.
+  const legacyUri = 'workspace://character/asset';
+  const legacyDoc = await readWorkspaceDoc<CharacterDocFile>(legacyUri, gameDir);
+  if (legacyDoc && legacyDoc.name === characterName) {
+    return { uri: legacyUri, doc: legacyDoc };
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -70,7 +200,7 @@ export async function modifyCharacterAppearance(
   params: ModifyCharacterAppearanceParams,
 ): Promise<ModifyCharacterAppearanceResult> {
   const now = params.now ?? (() => new Date());
-  const prev = await loadStoryWorkspace(params.gameDir);
+  const { snapshot: prev, hadAggregate } = await loadWorkspaceForModify(params.gameDir);
 
   const idx = prev.planner.characters.findIndex((c) => c.name === params.characterName);
   if (idx < 0) {
@@ -93,7 +223,25 @@ export async function modifyCharacterAppearance(
     writer: prev.writer,
     storyboarder: prev.storyboarder,
   };
-  await saveStoryWorkspace(params.gameDir, nextSnapshot);
+
+  // Per-URI: update the character doc (preserve image-gen fields). If the
+  // per-URI doc is missing (legacy v0.4 project), create one so subsequent
+  // `modify` and V5 tools line up.
+  const existingPerUri = await resolveCharacterDocUri(params.gameDir, params.characterName);
+  const targetUri =
+    existingPerUri?.uri ?? `workspace://character/${slugForFilename(params.characterName)}`;
+  const nextCharDoc: CharacterDocFile = {
+    ...(existingPerUri?.doc ?? {}),
+    name: newChar.name,
+    description: newChar.description,
+    visualDescription: newChar.visualDescription,
+  };
+  await writeWorkspaceDoc(targetUri, params.gameDir, nextCharDoc);
+
+  // Aggregate: only if it existed on disk pre-modification.
+  if (hadAggregate) {
+    await saveStoryWorkspace(params.gameDir, nextSnapshot);
+  }
 
   const registryPath = params.registryPath ?? defaultRegistryPath(params.gameDir);
   const registry = await loadRegistry(registryPath);
@@ -127,7 +275,7 @@ export interface ModifyDialogueLineParams extends ModifyContext {
 export async function modifyDialogueLine(
   params: ModifyDialogueLineParams,
 ): Promise<StoryWorkspaceSnapshot> {
-  const prev = await loadStoryWorkspace(params.gameDir);
+  const { snapshot: prev, hadAggregate } = await loadWorkspaceForModify(params.gameDir);
   const nextStoryboarder = patchShot(prev.storyboarder, params.shotNumber, (shot) => {
     if (params.lineIndex < 0 || params.lineIndex >= shot.dialogueLines.length) {
       throw new Error(
@@ -149,7 +297,10 @@ export async function modifyDialogueLine(
     writer: prev.writer,
     storyboarder: nextStoryboarder,
   };
-  await saveStoryWorkspace(params.gameDir, next);
+  await writeWorkspaceDoc('workspace://storyboard', params.gameDir, nextStoryboarder);
+  if (hadAggregate) {
+    await saveStoryWorkspace(params.gameDir, next);
+  }
   return next;
 }
 
@@ -165,7 +316,7 @@ export interface ReorderShotsParams extends ModifyContext {
 export async function reorderShots(
   params: ReorderShotsParams,
 ): Promise<StoryWorkspaceSnapshot> {
-  const prev = await loadStoryWorkspace(params.gameDir);
+  const { snapshot: prev, hadAggregate } = await loadWorkspaceForModify(params.gameDir);
   const oldShots = prev.storyboarder.shots;
 
   if (params.newOrder.length !== oldShots.length) {
@@ -195,7 +346,10 @@ export async function reorderShots(
     writer: prev.writer,
     storyboarder: nextStoryboarder,
   };
-  await saveStoryWorkspace(params.gameDir, next);
+  await writeWorkspaceDoc('workspace://storyboard', params.gameDir, nextStoryboarder);
+  if (hadAggregate) {
+    await saveStoryWorkspace(params.gameDir, next);
+  }
   return next;
 }
 

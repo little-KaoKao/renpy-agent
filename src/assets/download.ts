@@ -2,6 +2,7 @@
 //
 // Ren'Py 要求图片路径相对 game/ 目录(且用 POSIX 斜杠),所以 realAssetLocalPath 统一存相对路径。
 
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
@@ -58,10 +59,16 @@ export function inferExtensionFromUrl(url: string): string {
   return allowed.has(ext) ? `.${ext}` : '.bin';
 }
 
+// Hash fallback for names whose ASCII projection is empty (pure CJK, emoji, …).
+// Two distinct CJK names — e.g. "白樱" vs "樱白" — used to both collapse onto
+// the literal fallback 'asset' and then collide on `characters/asset.json`.
+// Using a stable SHA-1 of the raw value keeps them distinct across runs.
 export function slugForFilename(value: string): string {
   const ascii = value
     .toLowerCase()
     .replace(/[^a-z0-9_]+/g, '_')
     .replace(/^_+|_+$/g, '');
-  return ascii || 'asset';
+  if (ascii) return ascii;
+  const hash = createHash('sha1').update(value, 'utf8').digest('hex').slice(0, 8);
+  return `char_${hash}`;
 }

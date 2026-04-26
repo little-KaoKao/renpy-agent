@@ -19,6 +19,8 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { slugForFilename } from '../assets/download.js';
+import { writeWorkspaceDoc } from '../agents/workspace-io.js';
 import type { PlannerOutput, StoryboarderOutput, WriterOutput } from './types.js';
 
 export const WORKSPACE_DIRNAME = 'workspace';
@@ -123,6 +125,96 @@ export async function saveStoryWorkspace(
     writeJson(paths.storyboarderPath, snapshot.storyboarder),
   ]);
   return paths;
+}
+
+// ---------------------------------------------------------------------------
+// v0.7: per-URI projection of the same snapshot
+// ---------------------------------------------------------------------------
+//
+// v0.2 pipeline wrote three aggregate JSONs; V5 reads/writes per-URI docs. The
+// two used to drift: a v0.2-generated project couldn't be `modify`-ed through
+// the V5 tool chain because the per-URI layout was missing, and vice versa.
+//
+// saveStoryWorkspacePerUri() produces the V5 layout **from the same snapshot**
+// that saveStoryWorkspace() just wrote. Aggregate JSON stays as a `--resume`
+// fast-path + v0.2 legacy compat; per-URI is the canonical source from v0.8.
+
+export interface StoryWorkspacePerUriResult {
+  readonly projectUri: string;
+  readonly chapterUri: string;
+  readonly scriptUri: string;
+  readonly storyboardUri: string;
+  readonly characterUris: ReadonlyArray<string>;
+  readonly sceneUris: ReadonlyArray<string>;
+}
+
+export async function saveStoryWorkspacePerUri(
+  gameDir: string,
+  snapshot: StoryWorkspaceSnapshot,
+): Promise<StoryWorkspacePerUriResult> {
+  const paths = workspacePathsForGame(gameDir);
+  await mkdir(paths.workspaceDir, { recursive: true });
+
+  const projectUri = 'workspace://project';
+  const chapterUri = 'workspace://chapter';
+  const scriptUri = 'workspace://script';
+  const storyboardUri = 'workspace://storyboard';
+
+  // Shapes here mirror the V5 executer writers (producer / character-designer
+  // / scene-designer / writer / storyboarder tools). Keeping them aligned is
+  // what makes `modify` work against both v0.2 and V5 produced projects.
+  const projectDoc = {
+    title: snapshot.planner.projectTitle,
+    genre: snapshot.planner.genre,
+    tone: snapshot.planner.tone,
+    status: 'ready' as const,
+  };
+  const chapterDoc = {
+    projectUri,
+    outline: snapshot.planner.chapterOutline,
+    status: 'ready' as const,
+  };
+
+  const characterUris: string[] = [];
+  for (const c of snapshot.planner.characters) {
+    const slug = slugForFilename(c.name);
+    const uri = `workspace://character/${slug}`;
+    characterUris.push(uri);
+    await writeWorkspaceDoc(uri, gameDir, {
+      name: c.name,
+      description: c.description,
+      visualDescription: c.visualDescription,
+      mainImageUri: null,
+      status: 'placeholder' as const,
+    });
+  }
+
+  const sceneUris: string[] = [];
+  for (const s of snapshot.planner.scenes) {
+    const slug = slugForFilename(s.name);
+    const uri = `workspace://scene/${slug}`;
+    sceneUris.push(uri);
+    await writeWorkspaceDoc(uri, gameDir, {
+      name: s.name,
+      description: s.description,
+      backgroundUri: null,
+      status: 'placeholder' as const,
+    });
+  }
+
+  await writeWorkspaceDoc(projectUri, gameDir, projectDoc);
+  await writeWorkspaceDoc(chapterUri, gameDir, chapterDoc);
+  await writeWorkspaceDoc(scriptUri, gameDir, snapshot.writer);
+  await writeWorkspaceDoc(storyboardUri, gameDir, snapshot.storyboarder);
+
+  return {
+    projectUri,
+    chapterUri,
+    scriptUri,
+    storyboardUri,
+    characterUris,
+    sceneUris,
+  };
 }
 
 /** Save a single stage output — lets pipeline persist incrementally instead of waiting for all three. */
