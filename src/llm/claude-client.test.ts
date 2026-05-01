@@ -351,7 +351,7 @@ describe('ClaudeLlmClient prompt caching', () => {
     expect(call.system).toBe('short');
   });
 
-  it('strips cache_control on bedrock unless CLAUDE_BEDROCK_CACHE=1', async () => {
+  it('applies cache_control on bedrock by default (no opt-in needed)', async () => {
     const { create, client } = makeCacheAwareClient();
     const llm = new ClaudeLlmClient({ client: client as any, mode: 'bedrock' });
 
@@ -370,12 +370,39 @@ describe('ClaudeLlmClient prompt caching', () => {
     }
 
     const call = create.mock.calls[0]![0];
-    // Bedrock 默认 strip → 字符串降级路径,不含 cache_control
+    expect(Array.isArray(call.system)).toBe(true);
+    expect(call.system[0].cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('strips cache_control on bedrock when CLAUDE_BEDROCK_CACHE=0 (explicit opt-out)', async () => {
+    const { create, client } = makeCacheAwareClient();
+    const llm = new ClaudeLlmClient({ client: client as any, mode: 'bedrock' });
+
+    const bigSys = longText(4096);
+    const prev = process.env.CLAUDE_BEDROCK_CACHE;
+    process.env.CLAUDE_BEDROCK_CACHE = '0';
+    try {
+      await llm.chat({
+        messages: [
+          { role: 'system', content: bigSys, cacheControl: { type: 'ephemeral' } },
+          { role: 'user', content: 'go' },
+        ],
+      });
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_BEDROCK_CACHE;
+      else process.env.CLAUDE_BEDROCK_CACHE = prev;
+    }
+
+    const call = create.mock.calls[0]![0];
+    // Explicit CLAUDE_BEDROCK_CACHE=0 → 字符串降级路径,不含 cache_control
     expect(typeof call.system).toBe('string');
     expect(call.system).toBe(bigSys);
   });
 
-  it('respects CLAUDE_BEDROCK_CACHE=1 opt-in on bedrock', async () => {
+  it('ignores CLAUDE_BEDROCK_CACHE=1 (legacy opt-in value) — still defaults on', async () => {
+    // Back-compat: prior releases documented CLAUDE_BEDROCK_CACHE=1 as opt-in.
+    // Now that Bedrock caching defaults on, setting =1 is a no-op — but crucially
+    // must not cause a regression for users who carried this from their .env.
     const { create, client } = makeCacheAwareClient();
     const llm = new ClaudeLlmClient({ client: client as any, mode: 'bedrock' });
 
