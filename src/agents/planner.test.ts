@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { runPlannerTask } from './planner.js';
 import type { CommonToolContext } from './common-tools.js';
-import type { LlmClient, LlmToolChatResponse } from '../llm/types.js';
+import { appendPlannerMemory } from './memory.js';
+import type { LlmClient, LlmToolChatResponse, LlmToolMessage } from '../llm/types.js';
 
 function scriptedLlm(responses: LlmToolChatResponse[]): LlmClient {
   let i = 0;
@@ -154,5 +155,41 @@ describe('runPlannerTask', () => {
       .filter((b: any) => b.type === 'tool_result');
     expect(toolResults.length).toBeGreaterThan(0);
     expect(JSON.stringify(toolResults[0].content)).toContain('created project T');
+  });
+
+  it('injects an idempotent short-circuit hint when prior memories show Stage A delivered', async () => {
+    const ctx = await makeCtx();
+    await appendPlannerMemory(ctx.memoryDir, {
+      taskId: 'prior',
+      kind: 'finish',
+      summary: 'no more tasks, Stage A delivered',
+    });
+
+    const llm = scriptedLlm([
+      {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'p1',
+            name: 'output_with_finish',
+            input: { taskId: 'done', taskSummary: 'no more tasks, Stage A delivered' },
+          },
+        ],
+        stopReason: 'tool_use',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    ]);
+
+    const result = await runPlannerTask({ storyName: 's', llm, ctx, executerLlm: llm });
+    expect(result.done).toBe(true);
+
+    const call = (llm.chatWithTools as any).mock.calls[0][0];
+    const dynamicSystem = call.messages.find(
+      (m: LlmToolMessage) =>
+        m.role === 'system' &&
+        typeof m.content === 'string' &&
+        m.content.includes('prior memories indicate Stage A was already delivered'),
+    );
+    expect(dynamicSystem).toBeDefined();
   });
 });

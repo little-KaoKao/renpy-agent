@@ -68,8 +68,24 @@ export interface StoryboarderOutputShot {
   readonly cutscene?: StoryboarderOutputCutscene;
 }
 
+export interface StoryboarderCgListEntry {
+  readonly shotNumber: number;
+  readonly title: string;
+  readonly description: string;
+  /** e.g. "character-close-up" | "scene-establishing" | "cutscene-frame" */
+  readonly kind?: string;
+}
+
 export interface StoryboarderOutput {
   readonly shots: ReadonlyArray<StoryboarderOutputShot>;
+  /**
+   * Optional CG-list annotations produced by the storyboarder POC. Added in
+   * response to the M0 real-key smoke finding (Minor-3): LLM wanted to record
+   * which shots deserve a standalone CG but had no tool to write them.
+   */
+  readonly cgList?: ReadonlyArray<StoryboarderCgListEntry>;
+  /** Free-form storyboarder notes (tone / pacing / transitions). */
+  readonly notes?: string;
 }
 
 export interface TestRunResult {

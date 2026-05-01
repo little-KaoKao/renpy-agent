@@ -47,6 +47,10 @@ Rules:
 6. Each turn: call exactly ONE tool_use. Read its result, then plan the next call.
 7. You may use output_with_plan once at the start of a task to declare (in pseudo-code)
    what you intend to do; this is only for audit, the host does not parse it.
+8. IDEMPOTENT RE-ENTRY: if the workspace index shows project + chapter + script + storyboard
+   already exist AND prior memories include a finish with "Stage A delivered" / "no more tasks",
+   you should call output_with_finish immediately with the same wording. Do NOT re-read every
+   URI — trust the memory log. This saves a full LLM round-trip on rebuild.
 `;
 
 const PLANNER_SCHEMAS: ReadonlyArray<LlmToolSchema> = [
@@ -221,7 +225,7 @@ function buildPlannerDynamicSegment(
   index: WorkspaceIndex,
   memories: ReadonlyArray<PlannerMemoryEntry>,
 ): string {
-  return [
+  const parts = [
     `Project: ${storyName}`,
     '',
     'Current workspace index:',
@@ -229,7 +233,24 @@ function buildPlannerDynamicSegment(
     '',
     'Completed tasks (from planner_memories):',
     formatMemoriesForPrompt(memories),
-  ].join('\n');
+  ];
+  if (hasPriorDelivery(memories)) {
+    parts.push(
+      '',
+      'NOTE: prior memories indicate Stage A was already delivered. Per Rule 8, ' +
+        'if the workspace still looks complete, call output_with_finish immediately ' +
+        'with taskSummary="no more tasks, Stage A delivered" instead of re-verifying each URI.',
+    );
+  }
+  return parts.join('\n');
+}
+
+function hasPriorDelivery(memories: ReadonlyArray<PlannerMemoryEntry>): boolean {
+  return memories.some(
+    (e) =>
+      e.kind === 'finish' &&
+      /no more tasks|stage a delivered|all tasks (complete|done)/i.test(e.summary),
+  );
 }
 
 async function dispatchPlannerTool(

@@ -56,6 +56,31 @@ describe('output_with_plan', () => {
       summary: 'pseudo-code here',
     });
   });
+
+  it('warns when a new taskId is started before the previous plan is finished', async () => {
+    const ctx = await makeCtx();
+    await output_with_plan({ taskId: 't1', plan: 'first' }, ctx);
+    await output_with_plan({ taskId: 't2', plan: 'second' }, ctx);
+    expect(ctx.logger.warn).toHaveBeenCalledWith(
+      'output_with_plan.orphan_previous',
+      { previousTaskId: 't1', currentTaskId: 't2' },
+    );
+  });
+
+  it('does not warn when repeating the same taskId (revising the plan)', async () => {
+    const ctx = await makeCtx();
+    await output_with_plan({ taskId: 't1', plan: 'first' }, ctx);
+    await output_with_plan({ taskId: 't1', plan: 'revised' }, ctx);
+    expect(ctx.logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('does not warn when the previous plan has a matching finish', async () => {
+    const ctx = await makeCtx();
+    await output_with_plan({ taskId: 't1', plan: 'first' }, ctx);
+    await output_with_finish({ taskId: 't1', taskSummary: 'done' }, ctx);
+    await output_with_plan({ taskId: 't2', plan: 'next task' }, ctx);
+    expect(ctx.logger.warn).not.toHaveBeenCalled();
+  });
 });
 
 describe('output_with_finish', () => {
@@ -145,40 +170,50 @@ describe('call_task_agent', () => {
     });
   });
 
-  it('returns error for unknown agent names', async () => {
+  it('returns error for unknown agent names with retry=false + guidance', async () => {
     const ctx = await makeCtx();
     const result = await call_task_agent(
       { agentName: 'unknown_agent', input: {} },
       ctx,
     );
-    expect(result).toMatchObject({ error: expect.stringMatching(/not implemented/) });
+    expect(result).toMatchObject({
+      error: expect.stringMatching(/not implemented/),
+      retry: false,
+      guidance: expect.stringMatching(/placeholder/i),
+    });
   });
 
-  it('surfaces task-agent errors as tool_result error', async () => {
+  it('surfaces task-agent errors as tool_result with retry=true + guidance', async () => {
     const bad = vi.fn().mockRejectedValue(new Error('boom'));
     const ctx = await makeCtx({}, { character_prompt_expander: bad });
     const result = await call_task_agent(
       { agentName: 'character_prompt_expander', input: {} },
       ctx,
     );
-    expect(result).toMatchObject({ error: expect.stringMatching(/boom/) });
+    expect(result).toMatchObject({
+      error: expect.stringMatching(/boom/),
+      retry: true,
+      guidance: expect.stringMatching(/retry/i),
+    });
   });
 });
 
 describe('workflow stubs (v0.6 unavailable)', () => {
-  it('active_workflow returns error', async () => {
+  const expected = {
+    error: expect.stringMatching(/v0\.6 unavailable/),
+    retry: false,
+    guidance: expect.stringMatching(/workflow/i),
+  };
+  it('active_workflow returns error with retry=false + guidance', async () => {
     const ctx = await makeCtx();
-    const result = await active_workflow({ workflowName: 'whatever' }, ctx);
-    expect(result).toMatchObject({ error: expect.stringMatching(/v0\.6 unavailable/) });
+    expect(await active_workflow({ workflowName: 'whatever' }, ctx)).toMatchObject(expected);
   });
-  it('check_workflow_params returns error', async () => {
+  it('check_workflow_params returns error with retry=false + guidance', async () => {
     const ctx = await makeCtx();
-    const result = await check_workflow_params({ workflowName: 'whatever' }, ctx);
-    expect(result).toMatchObject({ error: expect.stringMatching(/v0\.6 unavailable/) });
+    expect(await check_workflow_params({ workflowName: 'whatever' }, ctx)).toMatchObject(expected);
   });
-  it('get_workflow_guide returns error', async () => {
+  it('get_workflow_guide returns error with retry=false + guidance', async () => {
     const ctx = await makeCtx();
-    const result = await get_workflow_guide({ workflowName: 'whatever' }, ctx);
-    expect(result).toMatchObject({ error: expect.stringMatching(/v0\.6 unavailable/) });
+    expect(await get_workflow_guide({ workflowName: 'whatever' }, ctx)).toMatchObject(expected);
   });
 });

@@ -4,7 +4,7 @@
 
 从一段灵感(文字 / 图)自动产出可玩 galgame 的 agent 流水线。
 
-**设计要点**见 [PLAN.md](PLAN.md)。这里只讲 clone 之后怎么跑起来。
+这里只讲 clone 之后怎么跑起来。
 
 ---
 
@@ -131,8 +131,7 @@ node --env-file=.env scripts/runninghub-smoke.mjs CHARACTER_MAIN_IMAGE SCENE_BAC
 
 | 路径                         | 是什么                                                         |
 | ---------------------------- | -------------------------------------------------------------- |
-| [PLAN.md](PLAN.md)           | 架构 / 决策 / 路线图(**读这个**)                            |
-| [src/](src/)                 | 全部 TS 源码;按 schema / workflows / pipeline / llm / executers / planner 分层 |
+| [src/](src/)                 | 全部 TS 源码;按 schema / pipeline / agents / llm / executers / assets 分层 |
 | [src/pipeline/](src/pipeline/) | v0.2 minimal pipeline:Planner → Writer → Storyboarder → Coder → QA |
 | [src/llm/](src/llm/)         | LlmClient 抽象 + ClaudeLlmClient                              |
 | [src/cli.ts](src/cli.ts)     | `renpy-agent` CLI 入口                                        |
@@ -146,4 +145,4 @@ node --env-file=.env scripts/runninghub-smoke.mjs CHARACTER_MAIN_IMAGE SCENE_BAC
 
 ## 资产生成后端
 
-走 [RunningHub](https://www.runninghub.cn/) 一个 API key,同时供图 / 视频模型。模型与 POC 的绑定见 [PLAN.md §3.5](PLAN.md)。
+走 [RunningHub](https://www.runninghub.cn/) 一个 API key,同时供图 / 视频 / 音频模型。8 个 AppKey 的 schema 登记在 [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts)。

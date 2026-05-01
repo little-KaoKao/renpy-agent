@@ -91,6 +91,62 @@ describe('storyboarder.condense_to_shots', () => {
     const res = await storyboarderTools.executors.condense_to_shots!({}, ctx);
     expect(res).toMatchObject({ error: expect.stringMatching(/script/i) });
   });
+
+  it('merges cgList + notes into the persisted storyboard doc', async () => {
+    const storyboardJson = {
+      shots: [
+        {
+          shotNumber: 1,
+          description: 'meeting',
+          characters: ['Baiying'],
+          sceneName: 'classroom',
+          staging: 'mid',
+          transforms: 'none',
+          transition: 'fade',
+          dialogueLines: [{ speaker: 'Baiying', text: 'hi' }],
+        },
+      ],
+    };
+    const chatWithTools = vi.fn().mockResolvedValue({
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tu_2',
+          name: 'emit_storyboarder_output',
+          input: storyboardJson,
+        },
+      ],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    const ctx = await makeCtx({ chat: vi.fn(), chatWithTools });
+
+    await writeWorkspaceDoc('workspace://project', ctx.gameDir, { title: 'T', genre: 'g', tone: 't' });
+    await writeWorkspaceDoc('workspace://chapter', ctx.gameDir, { outline: 'C1' });
+    await writeWorkspaceDoc('workspace://script', ctx.gameDir, {
+      scenes: [{ location: 'classroom', characters: ['Baiying'], lines: [{ speaker: 'Baiying', text: 'hi' }] }],
+    });
+
+    const res = await storyboarderTools.executors.condense_to_shots!(
+      {
+        cgList: [
+          { shotNumber: 1, title: 'first meeting', description: 'under the cherry tree', kind: 'scene-establishing' },
+          { bogus: true }, // should be filtered out
+        ],
+        notes: 'Slow pacing in shot 1 sets tone for act 2.',
+      },
+      ctx,
+    );
+    expect(res).toMatchObject({ uri: 'workspace://storyboard', shotCount: 1, cgEntries: 1 });
+
+    const doc = JSON.parse(
+      await readFile(resolve(ctx.gameDir, '..', 'workspace', 'storyboard.json'), 'utf8'),
+    );
+    expect(doc.cgList).toEqual([
+      { shotNumber: 1, title: 'first meeting', description: 'under the cherry tree', kind: 'scene-establishing' },
+    ]);
+    expect(doc.notes).toBe('Slow pacing in shot 1 sets tone for act 2.');
+  });
 });
 
 async function makeCutsceneCtx(): Promise<CommonToolContext> {

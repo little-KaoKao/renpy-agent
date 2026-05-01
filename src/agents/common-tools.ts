@@ -12,6 +12,7 @@ import type { RunningHubClient } from '../executers/common/runninghub-client.js'
 import type { FetchLike } from '../assets/download.js';
 import {
   appendPlannerMemory,
+  loadPlannerMemories,
   type PlannerMemoryEntry,
 } from './memory.js';
 import {
@@ -75,6 +76,25 @@ export async function output_with_plan(
   args: OutputWithPlanArgs,
   ctx: CommonToolContext,
 ): Promise<{ ok: true }> {
+  // Detect orphan plan: previous plan has no matching finish AND taskId differs.
+  // Observed in M0 real-key smoke: coder phase emitted 3 distinct taskIds in
+  // sequence, only the last one produced finish. Surface a warn so the trace
+  // log can attribute the re-plan; keep non-blocking because the LLM may have
+  // legitimate reasons (e.g. QA kick-back triggers a fresh plan id).
+  const prior = await loadPlannerMemories(ctx.memoryDir);
+  const lastPlan = [...prior].reverse().find((e) => e.kind === 'plan');
+  if (lastPlan && lastPlan.taskId !== args.taskId) {
+    const hasFinish = prior.some(
+      (e) => e.kind === 'finish' && e.taskId === lastPlan.taskId,
+    );
+    if (!hasFinish) {
+      ctx.logger.warn('output_with_plan.orphan_previous', {
+        previousTaskId: lastPlan.taskId,
+        currentTaskId: args.taskId,
+      });
+    }
+  }
+
   await appendPlannerMemory(ctx.memoryDir, {
     taskId: args.taskId,
     kind: 'plan',
@@ -167,7 +187,11 @@ export interface CallTaskAgentArgs {
 
 export type CallTaskAgentResult =
   | { readonly agentName: string; readonly output: Record<string, unknown> }
-  | { readonly error: string };
+  | {
+      readonly error: string;
+      readonly retry: boolean;
+      readonly guidance: string;
+    };
 
 export async function call_task_agent(
   args: CallTaskAgentArgs,
@@ -175,13 +199,23 @@ export async function call_task_agent(
 ): Promise<CallTaskAgentResult> {
   const fn = ctx.taskAgents[args.agentName];
   if (!fn) {
-    return { error: `task agent "${args.agentName}" not implemented in v0.6` };
+    return {
+      error: `task agent "${args.agentName}" not implemented in v0.6`,
+      retry: false,
+      guidance:
+        'This task agent is not wired up in v0.6. Do not retry — mark the corresponding asset status as "placeholder" and move on; Stage B will fill it later.',
+    };
   }
   try {
     const output = await fn(args.input, ctx);
     return { agentName: args.agentName, output };
   } catch (e) {
-    return { error: (e as Error).message };
+    return {
+      error: (e as Error).message,
+      retry: true,
+      guidance:
+        'Transient task-agent failure. You may retry once with the same input; if it still fails, mark the asset status "error" and continue with a placeholder.',
+    };
   }
 }
 
@@ -191,26 +225,37 @@ export interface WorkflowArgs {
   readonly workflowName: string;
 }
 
-const WORKFLOW_UNAVAILABLE = { error: 'workflow engine v0.6 unavailable; deferred to v0.7' };
+interface WorkflowUnavailable {
+  readonly error: string;
+  readonly retry: false;
+  readonly guidance: string;
+}
+
+const WORKFLOW_UNAVAILABLE: WorkflowUnavailable = {
+  error: 'workflow engine v0.6 unavailable; deferred to v0.7',
+  retry: false,
+  guidance:
+    'The workflow guide / param-check triplet is not shipped in v0.6. Proceed without workflow metadata; the POC description and tool schemas are sufficient for Stage A.',
+};
 
 export async function active_workflow(
   _args: WorkflowArgs,
   _ctx: CommonToolContext,
-): Promise<{ error: string }> {
+): Promise<WorkflowUnavailable> {
   return WORKFLOW_UNAVAILABLE;
 }
 
 export async function check_workflow_params(
   _args: WorkflowArgs,
   _ctx: CommonToolContext,
-): Promise<{ error: string }> {
+): Promise<WorkflowUnavailable> {
   return WORKFLOW_UNAVAILABLE;
 }
 
 export async function get_workflow_guide(
   _args: WorkflowArgs,
   _ctx: CommonToolContext,
-): Promise<{ error: string }> {
+): Promise<WorkflowUnavailable> {
   return WORKFLOW_UNAVAILABLE;
 }
 

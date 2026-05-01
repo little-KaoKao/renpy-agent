@@ -1,7 +1,12 @@
 import type { PocToolSet, ToolExecutor } from '../../agents/tool-schema.js';
 import { readWorkspaceDoc, writeWorkspaceDoc } from '../../agents/workspace-io.js';
 import { runStoryboarder } from '../../pipeline/storyboarder.js';
-import type { PlannerOutput, StoryboarderOutput, WriterOutput } from '../../pipeline/types.js';
+import type {
+  PlannerOutput,
+  StoryboarderCgListEntry,
+  StoryboarderOutput,
+  WriterOutput,
+} from '../../pipeline/types.js';
 import { requireTier2Client } from '../common/tier2-helpers.js';
 import { findByLogicalKey, loadRegistry } from '../../assets/registry.js';
 import { logicalKeyForScene, logicalKeyForCharacter } from '../../assets/logical-key.js';
@@ -62,6 +67,26 @@ async function assemblePlannerOutput(gameDir: string): Promise<PlannerOutput | s
   };
 }
 
+function parseCgList(raw: unknown): ReadonlyArray<StoryboarderCgListEntry> | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: StoryboarderCgListEntry[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const shotNumber = typeof rec.shotNumber === 'number' ? rec.shotNumber : null;
+    const title = typeof rec.title === 'string' ? rec.title : null;
+    const description = typeof rec.description === 'string' ? rec.description : null;
+    if (shotNumber === null || title === null || description === null) continue;
+    out.push({
+      shotNumber,
+      title,
+      description,
+      ...(typeof rec.kind === 'string' ? { kind: rec.kind } : {}),
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 const condense_to_shots: ToolExecutor = async (args, ctx) => {
   if (!ctx.llm) return { error: 'condense_to_shots: ctx.llm not injected' };
   const scriptUri = typeof args.scriptUri === 'string' ? args.scriptUri : 'workspace://script';
@@ -73,9 +98,26 @@ const condense_to_shots: ToolExecutor = async (args, ctx) => {
   if (typeof planner === 'string') return { error: `condense_to_shots: ${planner}` };
 
   const storyboard = await runStoryboarder({ planner, writer, llm: ctx.llm });
-  await writeWorkspaceDoc('workspace://storyboard', ctx.gameDir, storyboard);
-  ctx.logger.info('storyboarder.condense_to_shots', { shots: storyboard.shots.length });
-  return { uri: 'workspace://storyboard', shotCount: storyboard.shots.length };
+
+  const cgList = parseCgList(args.cgList);
+  const notes = typeof args.notes === 'string' && args.notes.length > 0 ? args.notes : undefined;
+  const enriched: StoryboarderOutput = {
+    ...storyboard,
+    ...(cgList ? { cgList } : {}),
+    ...(notes ? { notes } : {}),
+  };
+
+  await writeWorkspaceDoc('workspace://storyboard', ctx.gameDir, enriched);
+  ctx.logger.info('storyboarder.condense_to_shots', {
+    shots: enriched.shots.length,
+    cgEntries: cgList?.length ?? 0,
+    hasNotes: notes !== undefined,
+  });
+  return {
+    uri: 'workspace://storyboard',
+    shotCount: enriched.shots.length,
+    cgEntries: cgList?.length ?? 0,
+  };
 };
 
 interface CutsceneDoc {
@@ -179,10 +221,32 @@ export const storyboarderTools: PocToolSet = {
     {
       name: 'condense_to_shots',
       description:
-        'Condense the workspace://script into a Storyboard (<=8 shots). Persists to workspace://storyboard.',
+        'Condense the workspace://script into a Storyboard (<=8 shots). Persists to workspace://storyboard. ' +
+        'Optionally annotate shots with a cgList (standalone CG candidates) and free-form notes.',
       inputSchema: {
         type: 'object',
-        properties: { scriptUri: { type: 'string' } },
+        properties: {
+          scriptUri: { type: 'string' },
+          cgList: {
+            type: 'array',
+            description:
+              'Optional CG-list annotations. Each entry: {shotNumber, title, description, kind?}.',
+            items: {
+              type: 'object',
+              properties: {
+                shotNumber: { type: 'number' },
+                title: { type: 'string' },
+                description: { type: 'string' },
+                kind: { type: 'string' },
+              },
+              required: ['shotNumber', 'title', 'description'],
+            },
+          },
+          notes: {
+            type: 'string',
+            description: 'Free-form storyboarder notes (tone / pacing / transitions).',
+          },
+        },
       },
     },
     {
