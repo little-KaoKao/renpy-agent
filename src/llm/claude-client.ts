@@ -54,18 +54,24 @@ function cacheDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.CLAUDE_DISABLE_CACHE === '1';
 }
 
-function bedrockCacheOptIn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.CLAUDE_BEDROCK_CACHE === '1';
+function bedrockCacheExplicitOff(env: NodeJS.ProcessEnv = process.env): boolean {
+  // Only the literal "0" opts out. Unset / any other value falls through to
+  // the default-on behaviour so existing users get the cost win transparently.
+  return env.CLAUDE_BEDROCK_CACHE === '0';
 }
 
 /**
  * 决定是否真的给一条 system 片段挂 cache_control。
  *
- * 规则:调用方请求 + 没被 `CLAUDE_DISABLE_CACHE=1` 关掉 + 文本长度过门槛 +
- * (direct 默认开,或者 Bedrock 显式 `CLAUDE_BEDROCK_CACHE=1` 开了)。
+ * 规则:调用方请求 + 没被 `CLAUDE_DISABLE_CACHE=1` 全局关 + 文本长度过门槛 +
+ * (Bedrock 模式下没被 `CLAUDE_BEDROCK_CACHE=0` 单独关)。
  *
- * Bedrock 对 prompt cache 的支持和直连 Anthropic SDK 不完全对齐,默认 strip
- * 避免打爆;跑 `scripts/prompt-cache-probe.mjs` 验证过的人可以手动打开。
+ * Bedrock prompt cache **默认开**:M5 real-key smoke(2026-05-01)在 86 次调用
+ * 下全部正常,未再看到"打 cache 导致报错"的历史问题。保留 `CLAUDE_BEDROCK_CACHE=0`
+ * 作为 Bedrock-only 逃生口,供遇到 region / inference profile 罕见兼容问题的用户
+ * 关掉;`CLAUDE_DISABLE_CACHE=1` 仍是双模式总开关。
+ *
+ * 对比工具:`scripts/prompt-cache-probe.mjs` 可验证当前 region 的 cache 行为。
  */
 function shouldApplyCacheControl(
   requested: boolean,
@@ -74,7 +80,7 @@ function shouldApplyCacheControl(
 ): boolean {
   if (!requested) return false;
   if (cacheDisabledByEnv()) return false;
-  if (mode === 'bedrock' && !bedrockCacheOptIn()) return false;
+  if (mode === 'bedrock' && bedrockCacheExplicitOff()) return false;
   return estimateTokenFloorMet(text);
 }
 
