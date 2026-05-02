@@ -8,6 +8,17 @@ import { parseWorkspaceUri } from '../../agents/workspace-index.js';
 import { requireTier2Client, slugForFilename } from '../common/tier2-helpers.js';
 import { generateCharacterExpression } from './generate-expression.js';
 import { generateCharacterDynamicSprite } from './generate-dynamic-sprite.js';
+import {
+  loadRegistry,
+  registryPathForGame,
+  upsertRegistryEntry,
+  type AssetRegistryEntry,
+} from '../../assets/registry.js';
+import {
+  logicalKeyForCharacter,
+  logicalKeyForCharacterDynamicSprite,
+  logicalKeyForCharacterExpression,
+} from '../../assets/logical-key.js';
 
 interface ExpressionVariant {
   readonly expressionName: string;
@@ -55,7 +66,24 @@ const create_or_update_character: ToolExecutor = async (args, ctx) => {
 
   const existing = await readWorkspaceDoc<CharacterDoc>(resolvedUri, ctx.gameDir);
   const hasMainImageUriInArgs = 'mainImageUri' in args;
-  const mainImageUri = hasMainImageUriInArgs
+  const nextVisualDescription =
+    typeof args.visualDescription === 'string'
+      ? args.visualDescription
+      : (existing?.visualDescription ?? '');
+
+  // Dirty-state detection (§5.5.4 step 3): when an existing character's
+  // visualDescription changes, the previously-generated main image / expressions /
+  // dynamic sprite in the asset registry are stale. Flip those registry entries
+  // back to 'placeholder' so the next coder rebuild renders Solid()/Image()
+  // placeholders and the main-image task agent regenerates on demand. The
+  // character doc's mainImageUri is preserved as audit history — matching v0.4
+  // modifyCharacterAppearance semantics so the Coder path stays stable.
+  const visualDescriptionChanged =
+    existing !== undefined &&
+    typeof existing.visualDescription === 'string' &&
+    existing.visualDescription !== nextVisualDescription;
+
+  const mainImageUri: string | null = hasMainImageUriInArgs
     ? typeof args.mainImageUri === 'string'
       ? args.mainImageUri
       : null
@@ -65,24 +93,93 @@ const create_or_update_character: ToolExecutor = async (args, ctx) => {
     name: (typeof args.name === 'string' ? args.name : existing?.name) ?? '(unnamed)',
     description:
       (typeof args.description === 'string' ? args.description : existing?.description) ?? '',
-    visualDescription:
-      (typeof args.visualDescription === 'string'
-        ? args.visualDescription
-        : existing?.visualDescription) ?? '',
+    visualDescription: nextVisualDescription,
     mainImageUri,
     status: mainImageUri ? 'ready' : 'placeholder',
+    // Preserve expression / dynamic sprite URIs as audit history even when
+    // visualDescription changes. The registry-side placeholder flip is what
+    // actually forces Stage B to regenerate; keeping the URIs on the character
+    // doc lets callers inspect the prior asset if they need to.
     ...(existing?.expressions ? { expressions: existing.expressions } : {}),
     ...(existing?.dynamicSpriteUri ? { dynamicSpriteUri: existing.dynamicSpriteUri } : {}),
   };
 
   await writeWorkspaceDoc(resolvedUri, ctx.gameDir, merged);
+
+  let registryInvalidated = false;
+  if (visualDescriptionChanged) {
+    registryInvalidated = await markCharacterAssetsPlaceholder(ctx, merged.name);
+  }
+
   ctx.logger.info('character_designer.create_or_update', {
     uri: resolvedUri,
     status: merged.status,
+    visualDescriptionChanged,
+    registryInvalidated,
   });
   // Deterministic short ack; see rationale in scene-designer/tools.ts.
-  return { uri: resolvedUri, status: merged.status, saved: true };
+  return {
+    uri: resolvedUri,
+    status: merged.status,
+    saved: true,
+    ...(visualDescriptionChanged ? { visualDescriptionChanged: true } : {}),
+    ...(registryInvalidated ? { registryInvalidated: true } : {}),
+  };
 };
+
+/**
+ * Flip every asset-registry entry whose `logicalKey` begins with
+ * `character:<slug>:` back to `status: 'placeholder'`, preserving the old
+ * `realAssetLocalPath` as audit history. This is the Stage B dirty-state signal:
+ * Coder's next `swap_asset_placeholder` / `write_game_project` round will
+ * render the Solid()/Image() placeholder and the main-image task agent will
+ * re-generate on the next character-designer handoff.
+ *
+ * Returns true if any entry was flipped — for logging / tool-result telemetry.
+ */
+async function markCharacterAssetsPlaceholder(
+  ctx: CommonToolContext,
+  characterName: string,
+): Promise<boolean> {
+  const registryPath = ctx.registryPath ?? registryPathForGame(ctx.gameDir);
+  let registry;
+  try {
+    registry = await loadRegistry(registryPath);
+  } catch (e) {
+    // Missing registry dir on a fresh V5 project: nothing to invalidate.
+    ctx.logger.warn('character_designer.markCharacterAssets.load_failed', {
+      error: (e as Error).message,
+    });
+    return false;
+  }
+  const mainKey = logicalKeyForCharacter(characterName);
+  const dynamicKey = logicalKeyForCharacterDynamicSprite(characterName);
+  const mainKeyPrefix = `${mainKey.split(':').slice(0, 2).join(':')}:`; // character:<slug>:
+  let changed = false;
+  const now = new Date().toISOString();
+  for (const entry of registry.entries) {
+    if (!entry.logicalKey.startsWith(mainKeyPrefix)) continue;
+    if (entry.status !== 'ready') continue;
+    const invalidated: AssetRegistryEntry = {
+      ...entry,
+      status: 'placeholder',
+      updatedAt: now,
+    };
+    await upsertRegistryEntry(registryPath, invalidated);
+    changed = true;
+    ctx.logger.info('character_designer.asset_marked_placeholder', {
+      placeholderId: entry.placeholderId,
+      logicalKey: entry.logicalKey,
+      assetType: entry.assetType,
+    });
+  }
+  // Silence unused-var lint: mainKey / dynamicKey are the documented
+  // derivation of the prefix. Keep them referenced so future readers can trace
+  // back to the logical-key helpers.
+  void mainKey;
+  void dynamicKey;
+  return changed;
+}
 
 const generate_character_main_image: ToolExecutor = async () => ({
   error:

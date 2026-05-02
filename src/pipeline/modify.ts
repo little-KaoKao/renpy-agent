@@ -195,6 +195,11 @@ export interface ModifyCharacterAppearanceResult {
  * 若 AssetRegistry 里已有该角色 `character_main` 的 ready 条目,把它标成
  * `placeholder`,真资产路径保留做历史痕迹,status 回落 → Coder 下轮重渲染会自动
  * 掉回 Solid 占位,直到新立绘 ready。
+ *
+ * @deprecated Use `renpy-agent v5-modify <story> "<intent>"` instead (the V5
+ * Planner-driven modify chain, plan §5.5). Will be removed in v0.8. The v0.4
+ * `renpy-agent modify character` CLI subcommand that calls this continues to
+ * work for now.
  */
 export async function modifyCharacterAppearance(
   params: ModifyCharacterAppearanceParams,
@@ -272,6 +277,10 @@ export interface ModifyDialogueLineParams extends ModifyContext {
   readonly newSpeaker?: string;
 }
 
+/**
+ * @deprecated Use `renpy-agent v5-modify <story> "<intent>"` instead (the V5
+ * Planner-driven modify chain, plan §5.5). Will be removed in v0.8.
+ */
 export async function modifyDialogueLine(
   params: ModifyDialogueLineParams,
 ): Promise<StoryWorkspaceSnapshot> {
@@ -313,6 +322,10 @@ export interface ReorderShotsParams extends ModifyContext {
   readonly newOrder: ReadonlyArray<number>;
 }
 
+/**
+ * @deprecated Use `renpy-agent v5-modify <story> "<intent>"` instead (the V5
+ * Planner-driven modify chain, plan §5.5). Will be removed in v0.8.
+ */
 export async function reorderShots(
   params: ReorderShotsParams,
 ): Promise<StoryWorkspaceSnapshot> {

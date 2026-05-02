@@ -54,6 +54,78 @@ Rules:
    URI — trust the memory log. This saves a full LLM round-trip on rebuild.
 `;
 
+// Modify-mode Planner rules (§5.5). Replaces PLANNER_RULES when the orchestrator
+// invokes runPlannerTask({ mode: 'modify' }). Stays in the cacheable static
+// segment so both generate-mode and modify-mode runs can hit prompt-cache.
+const PLANNER_RULES_MODIFY = `You are the Planner for a Ren'Py galgame production pipeline, currently in MODIFY MODE.
+The project already exists. A user has issued a **modify intent** (e.g. "change the protagonist to short hair").
+Your job: translate that intent into the MINIMUM set of POC handoffs that realize it, then re-run coder + qa so the Ren'Py project stays playable.
+
+Rules:
+1. You cannot generate assets yourself. To get work done, hand off to a POC with handoff_to_agent.
+2. Known POC roles: producer, writer, storyboarder, character_designer, scene_designer,
+   music_director, voice_director, sfx_designer, ui_designer, coder, qa.
+3. Before acting, inspect the current workspace with read_from_uri to understand what exists
+   and which documents the intent touches. Unread guesses ship bugs.
+4. MINIMUM-HANDOFF PRINCIPLE: only hand off to a POC when their owned document must change.
+   Use the workspace schema's dependency relationships:
+     - changing visualDescription on a character -> character_designer only (image regenerates
+       via Stage B, storyboard/script reference by URI so nothing cascades)
+     - changing one dialogue line -> writer (owns script) OR storyboarder (owns shot's
+       dialogueLines[]); read both to find which one owns the target line before handing off
+     - changing a scene location's look -> scene_designer only
+     - adding a new character -> producer (if chapter.cast needs update) + character_designer
+       (create character doc) + writer (splice a line or two so the character appears)
+     - re-running coder and qa AT THE END after any content change so the .rpy project is
+       rebuilt and linted.
+5. OUT-OF-RANGE / UNRESOLVABLE: if the intent refers to something that doesn't exist
+   (shot N with N > current count, a character not in the workspace, a scene slug that
+   doesn't resolve), do NOT fabricate it. Call output_with_finish with a taskSummary that
+   explicitly says what was missing (e.g. "cannot apply: shot 99 not found in current storyboard").
+   The orchestrator will treat that as a graceful no-op.
+6. Each turn: call exactly ONE tool_use. Read its result, then plan the next call.
+7. output_with_plan is optional audit; the host does not parse it.
+8. When coder + qa have re-run AND lint has passed (or the coder/qa cycle has converged),
+   call output_with_finish with taskSummary="modify applied: <one-line description>".
+   Do NOT use the generate-mode "Stage A delivered" wording — that signals full-pipeline done
+   and will confuse idempotent re-entry checks on the next run.
+9. IMPORTANT: even though prior memories may contain "Stage A delivered" from the initial
+   generate run, you are NOT in generate mode. Ignore the idempotent-finish shortcut from
+   generate-mode Rule 8; always execute the modify handoff(s) first.
+
+Few-shot handoff patterns (mirror the minimum-handoff principle):
+
+(A) Intent: "change character Baiying to have short hair"
+    Turn 1: read_from_uri workspace://character/baiying    (confirm the character exists)
+    Turn 2: handoff_to_agent character_designer
+            brief: "Update visualDescription of workspace://character/baiying to a short-hair variant. Keep name/description intact. Clear mainImageUri so the main-image task-agent regenerates."
+    Turn 3: handoff_to_agent coder
+            brief: "Rebuild the .rpy project. Registry entry for Baiying's main image is now placeholder; re-swap on next ready notification."
+    Turn 4: handoff_to_agent qa  (brief: "run_qa on rebuilt project")
+    Turn 5: output_with_finish  taskSummary: "modify applied: Baiying visualDescription changed to short hair; main image reset to placeholder; coder rebuilt; qa ran."
+
+(B) Intent: "change shot 3 line 0 dialogue to '...the tree is blooming.'"
+    Turn 1: read_from_uri workspace://storyboard           (locate shot 3 line 0)
+    Turn 2: handoff_to_agent storyboarder
+            brief: "Update shot 3 dialogueLines[0].text to '...the tree is blooming.'. Do not touch other shots."
+    Turn 3: handoff_to_agent coder + qa (same as above)
+    Turn 4: output_with_finish  taskSummary: "modify applied: shot 3 line 0 dialogue updated; coder+qa re-ran."
+
+(C) Intent: "add a barista character named Takeda and have him say one line"
+    Turn 1: read_from_uri workspace://chapter              (see cast)
+    Turn 2: handoff_to_agent producer                      (add Takeda to chapter.cast)
+    Turn 3: handoff_to_agent character_designer            (create character/takeda doc)
+    Turn 4: handoff_to_agent writer                        (splice a line from Takeda)
+    Turn 5: handoff_to_agent storyboarder                  (re-condense so new line lands on a shot)
+    Turn 6: handoff_to_agent coder + qa
+    Turn 7: output_with_finish  taskSummary: "modify applied: added character Takeda; chapter cast, new character doc, one script line, and storyboard regenerated."
+
+(D) Intent: "change shot 99 line 0 dialogue to 'X'" (shot 99 does not exist)
+    Turn 1: read_from_uri workspace://storyboard
+    Turn 2: output_with_finish
+            taskSummary: "cannot apply: shot 99 not found in current storyboard (only N shots exist)."
+`;
+
 const PLANNER_POC_CAPABILITIES = `POC capability reference (for handoff_to_agent decisions):
 
 - producer (tier 1)
@@ -147,6 +219,23 @@ export const PLANNER_SYSTEM_PROMPT = [
   PLANNER_POC_CAPABILITIES,
 ].join('\n');
 
+/**
+ * Modify-mode static segment. Drops in as a replacement for PLANNER_SYSTEM_PROMPT
+ * when runPlannerTask({ mode: 'modify' }) is used. Still a cacheable static block
+ * (no per-run substitutions), so prompt-cache hits normally.
+ */
+export const PLANNER_SYSTEM_PROMPT_MODIFY = [
+  PLANNER_RULES_MODIFY,
+  '---',
+  'Workspace schema reference (for your planning decisions):',
+  '',
+  SCHEMA_DIGEST,
+  '---',
+  PLANNER_POC_CAPABILITIES,
+].join('\n');
+
+export type PlannerMode = 'generate' | 'modify';
+
 const PLANNER_SCHEMAS: ReadonlyArray<LlmToolSchema> = [
   {
     name: 'output_with_plan',
@@ -207,6 +296,15 @@ export interface RunPlannerTaskParams {
   readonly maxTurns?: number;
   /** For tests: override the task-agent registry passed into Executer ctx. */
   readonly executerCtxOverrides?: Partial<CommonToolContext>;
+  /**
+   * 'generate' (default): full-pipeline Stage A run with idempotent-finish
+   * shortcut when prior memories indicate delivery.
+   * 'modify': swap in the modify-mode static prompt + surface modifyIntent to
+   * the Planner. See §5.5.4 step 2.
+   */
+  readonly mode?: PlannerMode;
+  /** Required when `mode === 'modify'`: the user's modify intent in natural language. */
+  readonly modifyIntent?: string;
 }
 
 export interface RunPlannerTaskResult {
@@ -226,16 +324,35 @@ export async function runPlannerTask(
 
   const index = await buildWorkspaceIndex(params.ctx.gameDir);
   const memories = await loadPlannerMemories(params.ctx.memoryDir);
+  const mode: PlannerMode = params.mode ?? 'generate';
+  if (mode === 'modify' && !params.modifyIntent) {
+    throw new Error('runPlannerTask(mode=modify): modifyIntent is required');
+  }
 
-  // 分两段 system:第一段是 bytewise 恒定的 Planner 7 条规则(适合 prompt cache),
-  // 第二段是 storyName / workspace index / memories(每轮都在变,不打 cache)。
+  const staticPrompt =
+    mode === 'modify' ? PLANNER_SYSTEM_PROMPT_MODIFY : PLANNER_SYSTEM_PROMPT;
+
+  // 分两段 system:第一段是 bytewise 恒定的 Planner 规则 + few-shot(适合 prompt cache),
+  // 第二段是 storyName / workspace index / memories / modify intent(每轮都在变,不打 cache)。
+  const dynamicSegment =
+    mode === 'modify'
+      ? buildPlannerDynamicSegmentModify(
+          params.storyName,
+          index,
+          memories,
+          params.modifyIntent ?? '',
+        )
+      : buildPlannerDynamicSegment(params.storyName, index, memories);
+
+  const initialUserMessage =
+    mode === 'modify'
+      ? `Project "${params.storyName}". Apply this modify intent with the minimum set of POC handoffs, then rebuild via coder + qa:\n\n${params.modifyIntent}`
+      : `Project "${params.storyName}". Decide the next task to push Stage A forward, or finish if no more tasks are needed.`;
+
   const messages: LlmToolMessage[] = [
-    { role: 'system', content: PLANNER_SYSTEM_PROMPT, cacheControl: { type: 'ephemeral' } },
-    { role: 'system', content: buildPlannerDynamicSegment(params.storyName, index, memories) },
-    {
-      role: 'user',
-      content: `Project "${params.storyName}". Decide the next task to push Stage A forward, or finish if no more tasks are needed.`,
-    },
+    { role: 'system', content: staticPrompt, cacheControl: { type: 'ephemeral' } },
+    { role: 'system', content: dynamicSegment },
+    { role: 'user', content: initialUserMessage },
   ];
 
   let lastFinishSummary: string | null = null;
@@ -339,6 +456,30 @@ function buildPlannerDynamicSegment(
   return parts.join('\n');
 }
 
+function buildPlannerDynamicSegmentModify(
+  storyName: string,
+  index: WorkspaceIndex,
+  memories: ReadonlyArray<PlannerMemoryEntry>,
+  modifyIntent: string,
+): string {
+  // Deliberately omit the idempotent-finish hint even if prior memories say
+  // "Stage A delivered" — modify mode *must* act on the intent.
+  return [
+    `Project: ${storyName}`,
+    '',
+    'Mode: MODIFY (the Ren\'Py project already exists; apply the user intent below).',
+    '',
+    'User modify intent:',
+    modifyIntent,
+    '',
+    'Current workspace index (the set of documents you can read / modify via handoffs):',
+    index.formatForPrompt(),
+    '',
+    'Completed tasks (from planner_memories, include prior generate runs):',
+    formatMemoriesForPrompt(memories),
+  ].join('\n');
+}
+
 function hasPriorDelivery(memories: ReadonlyArray<PlannerMemoryEntry>): boolean {
   return memories.some(
     (e) =>
@@ -405,5 +546,7 @@ async function dispatchPlannerTool(
 }
 
 function isDoneSummary(summary: string): boolean {
-  return /no more tasks|stage a delivered|all tasks (complete|done)/i.test(summary);
+  return /no more tasks|stage a delivered|all tasks (complete|done)|^modify applied|^cannot apply/i.test(
+    summary,
+  );
 }

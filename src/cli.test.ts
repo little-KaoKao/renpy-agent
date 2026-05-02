@@ -152,6 +152,52 @@ describe('parseArgs - modify shots', () => {
   });
 });
 
+describe('parseArgs - v5-modify', () => {
+  it('parses story + intent as quoted positional', () => {
+    const r = parseArgs(['v5-modify', 'demo', 'change Baiying to short hair']);
+    if (r.kind !== 'v5-modify') throw new Error('expected v5-modify');
+    expect(r.storyName).toBe('demo');
+    expect(r.modifyIntent).toBe('change Baiying to short hair');
+    expect(r.budgetCapUsd).toBeUndefined();
+  });
+
+  it('joins multiple positional tokens into one intent string', () => {
+    const r = parseArgs(['v5-modify', 'demo', 'change', 'Baiying', 'to', 'short', 'hair']);
+    if (r.kind !== 'v5-modify') throw new Error('expected v5-modify');
+    expect(r.modifyIntent).toBe('change Baiying to short hair');
+  });
+
+  it('parses --budget-cap value form', () => {
+    const r = parseArgs(['v5-modify', 'demo', '--budget-cap', '1.5', 'change things']);
+    if (r.kind !== 'v5-modify') throw new Error('expected v5-modify');
+    expect(r.budgetCapUsd).toBeCloseTo(1.5);
+    expect(r.modifyIntent).toBe('change things');
+  });
+
+  it('parses --budget-cap=value form', () => {
+    const r = parseArgs(['v5-modify', 'demo', '--budget-cap=3', 'change things']);
+    if (r.kind !== 'v5-modify') throw new Error('expected v5-modify');
+    expect(r.budgetCapUsd).toBe(3);
+  });
+
+  it('errors when <story> missing', () => {
+    expect(() => parseArgs(['v5-modify'])).toThrow(/<story> is required/);
+  });
+
+  it('errors when <intent> empty', () => {
+    expect(() => parseArgs(['v5-modify', 'demo'])).toThrow(/<intent> is required/);
+  });
+
+  it('errors when --budget-cap is not a positive number', () => {
+    expect(() => parseArgs(['v5-modify', 'demo', '--budget-cap', 'abc', 'x'])).toThrow(
+      /positive number/,
+    );
+    expect(() => parseArgs(['v5-modify', 'demo', '--budget-cap', '0', 'x'])).toThrow(
+      /positive number/,
+    );
+  });
+});
+
 describe('parseArgs - rebuild', () => {
   it('parses `rebuild <story>`', () => {
     const r = parseArgs(['rebuild', 'demo']);
