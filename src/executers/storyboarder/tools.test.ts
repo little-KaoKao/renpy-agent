@@ -92,6 +92,35 @@ describe('storyboarder.condense_to_shots', () => {
     expect(res).toMatchObject({ error: expect.stringMatching(/script/i) });
   });
 
+  // Regression guard for M6 smoke (2026-05-02): parallel to writer's
+  // non-retriable-on-exhaust guard. runStoryboarder's internal retry is 2x;
+  // on exhaustion condense_to_shots must return retry:false + guidance
+  // instead of letting the error bubble (which would cause the Planner to
+  // re-handoff storyboarder forever).
+  it('returns non-retriable error with guidance when runStoryboarder exhausts its internal retry', async () => {
+    const chatWithTools = vi.fn().mockResolvedValue({
+      content: [{ type: 'tool_use', id: 'tu', name: 'emit_storyboarder_output', input: {} }],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    const ctx = await makeCtx({ chat: vi.fn(), chatWithTools });
+
+    await writeWorkspaceDoc('workspace://project', ctx.gameDir, { title: 'T', genre: 'g', tone: 't' });
+    await writeWorkspaceDoc('workspace://chapter', ctx.gameDir, { outline: 'C1' });
+    await writeWorkspaceDoc('workspace://script', ctx.gameDir, {
+      scenes: [{ location: 'x', characters: [], lines: [{ speaker: 'N', text: 'y' }] }],
+    });
+
+    const res = await storyboarderTools.executors.condense_to_shots!({}, ctx);
+
+    expect(res).toMatchObject({
+      error: expect.stringMatching(/condense_to_shots failed after internal retry/),
+      retry: false,
+      guidance: expect.stringMatching(/Do not re-handoff the storyboarder/),
+    });
+    expect(chatWithTools.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
   it('merges cgList + notes into the persisted storyboard doc', async () => {
     const storyboardJson = {
       shots: [

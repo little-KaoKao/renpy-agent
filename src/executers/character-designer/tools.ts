@@ -80,7 +80,8 @@ const create_or_update_character: ToolExecutor = async (args, ctx) => {
     uri: resolvedUri,
     status: merged.status,
   });
-  return { uri: resolvedUri, ...merged };
+  // Deterministic short ack; see rationale in scene-designer/tools.ts.
+  return { uri: resolvedUri, status: merged.status, saved: true };
 };
 
 const generate_character_main_image: ToolExecutor = async () => ({

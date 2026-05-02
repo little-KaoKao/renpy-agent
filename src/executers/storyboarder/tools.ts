@@ -97,7 +97,22 @@ const condense_to_shots: ToolExecutor = async (args, ctx) => {
   const planner = await assemblePlannerOutput(ctx.gameDir);
   if (typeof planner === 'string') return { error: `condense_to_shots: ${planner}` };
 
-  const storyboard = await runStoryboarder({ planner, writer, llm: ctx.llm });
+  // See draft_script for rationale: runStoryboarder's internal retry is bounded
+  // at 2; letting a failure bubble turns it into an unbounded Planner re-handoff
+  // loop.
+  let storyboard;
+  try {
+    storyboard = await runStoryboarder({ planner, writer, llm: ctx.llm });
+  } catch (e) {
+    const msg = (e as Error).message;
+    ctx.logger.error('storyboarder.condense_to_shots', { error: msg });
+    return {
+      error: `condense_to_shots failed after internal retry: ${msg}`,
+      retry: false,
+      guidance:
+        'Storyboarder LLM could not produce valid shots after 2 attempts. Do not re-handoff the storyboarder with the same script. Consider finishing the task if an older storyboard exists in workspace://storyboard, or reporting Stage A as blocked on storyboarder failure.',
+    };
+  }
 
   const cgList = parseCgList(args.cgList);
   const notes = typeof args.notes === 'string' && args.notes.length > 0 ? args.notes : undefined;
@@ -117,6 +132,7 @@ const condense_to_shots: ToolExecutor = async (args, ctx) => {
     uri: 'workspace://storyboard',
     shotCount: enriched.shots.length,
     cgEntries: cgList?.length ?? 0,
+    saved: true,
   };
 };
 

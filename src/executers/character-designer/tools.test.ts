@@ -111,6 +111,27 @@ describe('characterDesigner.create_or_update_character', () => {
     );
     expect(res).toMatchObject({ error: expect.stringMatching(/uri or name/i) });
   });
+
+  // Regression guard for M6 smoke (2026-05-02): see the matching regression
+  // test in scene-designer/tools.test.ts. Compact deterministic ack only —
+  // no echoed doc — so duplicate upserts return byte-identical results.
+  it('returns compact ack + byte-identical on duplicate upsert', async () => {
+    const ctx = await makeCtx();
+    const first = await characterDesignerTools.executors.create_or_update_character!(
+      { name: 'Baiying', description: 'd', visualDescription: 'v' },
+      ctx,
+    );
+    expect(first).toEqual({
+      uri: 'workspace://character/baiying',
+      status: 'placeholder',
+      saved: true,
+    });
+    const second = await characterDesignerTools.executors.create_or_update_character!(
+      { name: 'Baiying', description: 'd', visualDescription: 'v' },
+      ctx,
+    );
+    expect(second).toEqual(first);
+  });
 });
 
 describe('characterDesigner.generate_character_main_image (v0.6 stub)', () => {

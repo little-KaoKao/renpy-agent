@@ -64,10 +64,27 @@ const draft_script: ToolExecutor = async (args, ctx) => {
     chapterOutline: chapter.outline,
   };
 
-  const writerOutput = await runWriter({ planner: plannerOutput, llm: ctx.llm });
-  await writeWorkspaceDoc('workspace://script', ctx.gameDir, writerOutput);
-  ctx.logger.info('writer.draft_script', { shotCount: writerOutput.scenes.length });
-  return { uri: 'workspace://script', sceneCount: writerOutput.scenes.length };
+  // Wrap runWriter: its internal retryOnStageValidationError already attempts
+  // twice. If it still fails, bubbling the raw Error lets the Planner re-handoff
+  // writer indefinitely — which is exactly the $5 burn seen in M6 smoke
+  // (2026-05-02): 18 handoffs × 2 retries = 36 LLM calls, all producing
+  // empty emit_writer_output inputs. Catch, return structured non-retriable
+  // error so the Planner either tries a different tactic or gracefully finishes.
+  try {
+    const writerOutput = await runWriter({ planner: plannerOutput, llm: ctx.llm });
+    await writeWorkspaceDoc('workspace://script', ctx.gameDir, writerOutput);
+    ctx.logger.info('writer.draft_script', { shotCount: writerOutput.scenes.length });
+    return { uri: 'workspace://script', sceneCount: writerOutput.scenes.length, saved: true };
+  } catch (e) {
+    const msg = (e as Error).message;
+    ctx.logger.error('writer.draft_script', { error: msg });
+    return {
+      error: `draft_script failed after internal retry: ${msg}`,
+      retry: false,
+      guidance:
+        'Writer LLM could not produce a valid script after 2 attempts. Do not re-handoff the writer with the same inputs. Consider: (a) shrinking the planner context (fewer characters / scenes), (b) finishing the task and letting a human review, or (c) if this persists, finish Stage A with whatever is in workspace://script if any older version exists.',
+    };
+  }
 };
 
 export const writerTools: PocToolSet = {

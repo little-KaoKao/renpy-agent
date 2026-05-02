@@ -25,7 +25,9 @@ const create_project: ToolExecutor = async (args, ctx) => {
   const doc: ProjectDoc = { title, genre, tone, status: 'ready' };
   await writeWorkspaceDoc('workspace://project', ctx.gameDir, doc);
   ctx.logger.info('producer.create_project', { title });
-  return { uri: 'workspace://project', ...doc };
+  // Deterministic short ack — see rationale in scene-designer/tools.ts
+  // (M6 smoke found LLMs re-issuing upserts when the ack echoed the full doc).
+  return { uri: 'workspace://project', status: 'ready', saved: true };
 };
 
 const create_chapter: ToolExecutor = async (args, ctx) => {
@@ -41,7 +43,7 @@ const create_chapter: ToolExecutor = async (args, ctx) => {
   const doc: ChapterDoc = { projectUri, outline, status: 'ready' };
   await writeWorkspaceDoc('workspace://chapter', ctx.gameDir, doc);
   ctx.logger.info('producer.create_chapter', { projectUri });
-  return { uri: 'workspace://chapter', ...doc };
+  return { uri: 'workspace://chapter', status: 'ready', saved: true };
 };
 
 export const producerTools: PocToolSet = {

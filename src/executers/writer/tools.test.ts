@@ -97,4 +97,41 @@ describe('writer.draft_script', () => {
     );
     expect(res).toMatchObject({ error: expect.stringMatching(/chapter/i) });
   });
+
+  // Regression guard for M6 smoke (2026-05-02): the LLM emitted empty
+  // emit_writer_output on every attempt. The internal retry (2x) exhausted,
+  // runWriter threw, and draft_script let the error bubble — so Planner
+  // re-handoffed writer indefinitely, burning 36 LLM calls ($2.80). Now
+  // draft_script must swallow the error and return retry:false + guidance
+  // so the Planner stops hammering writer with the same inputs.
+  it('returns non-retriable error with guidance when runWriter exhausts its internal retry', async () => {
+    // Simulate what runWriter does on failure: two attempts, both produce
+    // empty input that fails assertWriterOutput, retry helper eventually throws.
+    const chatWithTools = vi.fn().mockResolvedValue({
+      content: [{ type: 'tool_use', id: 'tu', name: 'emit_writer_output', input: {} }],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    const ctx = await makeCtx({ chat: vi.fn(), chatWithTools });
+
+    await writeWorkspaceDoc('workspace://project', ctx.gameDir, {
+      title: 'T', genre: 'g', tone: 't', status: 'ready',
+    });
+    await writeWorkspaceDoc('workspace://chapter', ctx.gameDir, {
+      projectUri: 'workspace://project', outline: 'c1', status: 'ready',
+    });
+
+    const res = await writerTools.executors.draft_script!(
+      { chapterUri: 'workspace://chapter', characterUris: [], sceneUris: [] },
+      ctx,
+    );
+
+    expect(res).toMatchObject({
+      error: expect.stringMatching(/draft_script failed after internal retry/),
+      retry: false,
+      guidance: expect.stringMatching(/Do not re-handoff the writer/),
+    });
+    // Internal retry is bounded at 2 attempts — confirm we didn't explode beyond that.
+    expect(chatWithTools.mock.calls.length).toBeLessThanOrEqual(2);
+  });
 });

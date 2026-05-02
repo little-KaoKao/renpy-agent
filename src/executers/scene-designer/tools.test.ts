@@ -63,6 +63,40 @@ describe('sceneDesigner.create_or_update_scene', () => {
     expect(doc.backgroundUri).toBe('images/scenes/x.png');
     expect(doc.status).toBe('ready');
   });
+
+  // Regression guard for M6 smoke (2026-05-02): the LLM saw verbose tool_result
+  // echoes (full doc contents) and re-issued create_or_update_scene for each of
+  // 9 scenes twice, burning $1+ of the $5 budget. The ack must be compact and
+  // must NOT include the full document — only {uri, status, saved}.
+  it('returns a compact deterministic ack (does not echo description/backgroundUri)', async () => {
+    const ctx = await makeCtx();
+    const res = await sceneDesignerTools.executors.create_or_update_scene!(
+      {
+        name: 'Classroom',
+        description: 'long LLM-generated description that must not be echoed back',
+        backgroundUri: 'images/scenes/classroom.png',
+      },
+      ctx,
+    );
+    expect(res).toEqual({
+      uri: 'workspace://scene/classroom',
+      status: 'ready',
+      saved: true,
+    });
+  });
+
+  it('returns byte-identical ack on duplicate upsert (dedup signal)', async () => {
+    const ctx = await makeCtx();
+    const first = await sceneDesignerTools.executors.create_or_update_scene!(
+      { name: 'Rooftop', description: 'd1' },
+      ctx,
+    );
+    const second = await sceneDesignerTools.executors.create_or_update_scene!(
+      { name: 'Rooftop', description: 'd1' },
+      ctx,
+    );
+    expect(second).toEqual(first);
+  });
 });
 
 async function makeCtxWithClient() {

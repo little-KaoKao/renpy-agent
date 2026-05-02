@@ -80,7 +80,11 @@ const create_or_update_scene: ToolExecutor = async (args, ctx) => {
     uri: resolvedUri,
     status: merged.status,
   });
-  return { uri: resolvedUri, ...merged };
+  // Return a short, deterministic ack so the LLM sees the same bytes each time
+  // a duplicate upsert would land — signals "already saved, stop re-calling".
+  // M6 smoke (2026-05-02) caught the LLM re-issuing 9×2 create_or_update_scene
+  // calls because the previous verbose return made each result look novel.
+  return { uri: resolvedUri, status: merged.status, saved: true };
 };
 
 const generate_scene_background: ToolExecutor = async () => ({
