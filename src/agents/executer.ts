@@ -150,6 +150,15 @@ export async function runExecuterTask(
     ...set.executors,
   };
 
+  // Per-handoff counter for read_from_uri calls. Exposed to tools via the
+  // injected ctx so tools (notably qa.run_qa) can enforce a read-before-act
+  // quota. Local to this call — never leaks across handoffs.
+  let readFromUriCount = 0;
+  const ctxWithCounter: CommonToolContext = {
+    ...params.ctx,
+    readFromUriCount: () => readFromUriCount,
+  };
+
   // Cacheable static segment:7 rules + POC identity + role-specific tool-set
   // 说明。对同一个 pocRole 的每次 handoff 都一样,天然适合 prompt cache。
   const cacheableSystemPrompt = [
@@ -240,9 +249,12 @@ export async function runExecuterTask(
         try {
           const out = await executor(
             (tu.input as Record<string, unknown>) ?? {},
-            params.ctx,
+            ctxWithCounter,
           );
           resultContent = JSON.stringify(out);
+          if (tu.name === 'read_from_uri' && !('error' in out)) {
+            readFromUriCount += 1;
+          }
           if (tu.name === 'output_with_finish') {
             lastFinishSummary =
               typeof (tu.input as { taskSummary?: unknown }).taskSummary === 'string'

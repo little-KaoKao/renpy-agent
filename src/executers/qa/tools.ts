@@ -1,8 +1,43 @@
 import type { PocToolSet, ToolExecutor } from '../../agents/tool-schema.js';
+import { buildWorkspaceIndex } from '../../agents/workspace-index.js';
 import { writeWorkspaceDoc } from '../../agents/workspace-io.js';
 import { runQa } from '../../pipeline/qa.js';
 
+// Floor: even tiny workspaces must be cross-checked against 5 docs before
+// lint is trusted, because lint can't catch cross-document drift.
+const QA_MIN_READS_FLOOR = 5;
+
+function computeMinRequiredReads(totalDocs: number): number {
+  return Math.max(QA_MIN_READS_FLOOR, Math.ceil(totalDocs * 0.5));
+}
+
 const run_qa: ToolExecutor = async (_args, ctx) => {
+  const index = await buildWorkspaceIndex(ctx.gameDir);
+  const totalDocs = index.entries.length;
+  const minRequiredReads = computeMinRequiredReads(totalDocs);
+  const actualReads = ctx.readFromUriCount?.() ?? 0;
+
+  if (actualReads < minRequiredReads) {
+    ctx.logger.warn('qa.run_qa.read_quota_rejected', {
+      totalDocs,
+      minRequiredReads,
+      actualReads,
+    });
+    return {
+      error:
+        `insufficient reads: read ${actualReads} of ${totalDocs} workspace docs before run_qa; ` +
+        `at least ${minRequiredReads} required`,
+      retry: false,
+      guidance:
+        `read at least ${minRequiredReads} docs via read_from_uri before running QA lint — ` +
+        'lint only catches syntax; cross-document consistency (character names in storyboard ' +
+        'vs character docs, scene references, script line indices) must be checked by reading.',
+      totalDocs,
+      minRequiredReads,
+      actualReads,
+    };
+  }
+
   const result = await runQa({ gamePath: ctx.gameDir });
   ctx.logger.info('qa.run_qa', { result: result.result });
   return {

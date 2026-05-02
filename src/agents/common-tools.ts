@@ -69,6 +69,14 @@ export interface CommonToolContext {
    * asset as placeholder. Undefined = no timeout (legacy behaviour).
    */
   readonly taskAgentTimeoutMs?: number;
+  /**
+   * How many times `read_from_uri` has been called in the current Executer
+   * sub-conversation. The Executer loop injects this so tools (notably
+   * `run_qa`) can enforce a "must have read a minimum number of docs before
+   * running" quota. Undefined in non-Executer contexts — callers should treat
+   * absence as "unknown", not "zero".
+   */
+  readonly readFromUriCount?: () => number;
 }
 
 // ── Planner side ────────────────────────────────────────────────────
