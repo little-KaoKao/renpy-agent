@@ -31,8 +31,10 @@ pwsh scripts/setup-renpy.ps1
 # 3. 装依赖 + 配 key
 pnpm install
 cp .env.example .env
-#    用编辑器打开 .env 填入 ANTHROPIC_API_KEY(v0.2 必需)和
-#    RUNNINGHUB_API_KEY(v0.3 开始用到)
+#    用编辑器打开 .env 填入 AWS Bedrock 三件套
+#    (CLAUDE_CODE_USE_BEDROCK=1 / AWS_REGION / AWS_BEARER_TOKEN_BEDROCK)
+#    和 RUNNINGHUB_API_KEY(v0.3+ 资产生成用到)
+#    或 ANTHROPIC_API_KEY(直连模式)
 
 # 4. 验证环境:跑手工 demo,应当出现 8 镜头占位画面
 renpy-sdk/renpy.exe docs/examples/baiying-demo
@@ -40,7 +42,10 @@ renpy-sdk/renpy.exe docs/examples/baiying-demo
 # 5. 构建 agent 代码
 pnpm build
 
-# 6. 喂一段灵感,产出在 runtime/games/<story-name>/game/
+# 6a. v0.7 推荐路径:V5 Planner/Executer(真资产 + prompt cache,成本 ~$2)
+node --env-file=.env dist/cli.js v5 --story sakura-night "一个关于樱花树下告白的故事"
+
+# 6b. 老路径:v0.2 minimal pipeline(Planner → Writer → Storyboarder → Coder → QA)
 node --env-file=.env dist/cli.js --name sakura-night "一个关于樱花树下告白的故事"
 
 # 7. 玩 agent 产物
@@ -90,6 +95,22 @@ renpy-sdk/renpy.sh runtime/games/sakura-night/game
 
 ## 修改已有 story
 
+### V5 Planner 驱动修改(v0.7 推荐)
+
+V5 的 modify 链条让 Planner 读当前 workspace 自己决定改哪几份文档。自然语言表达意图,Planner 算最小改动集(例如"改短发"→ 只重跑 character_designer + registry 回落占位,storyboard/script/rpy 不动):
+
+```powershell
+# 前提:先跑过一次 v5 生成
+node --env-file=.env dist/cli.js v5-modify sakura-night "把白樱改成短发双马尾"
+node --env-file=.env dist/cli.js v5-modify sakura-night "第 3 镜第 0 句改成:别这样看着我"
+node --env-file=.env dist/cli.js v5-modify sakura-night "加一个咖啡店店长作为配角"
+
+# 给 modify 加预算闸门(默认无上限):
+node --env-file=.env dist/cli.js v5-modify sakura-night "..." --budget-cap 2
+```
+
+### v0.4 固定指令式修改(硬编码的 3 条路径)
+
 一次 `generate` 之后,workspace JSON(`runtime/games/<story>/workspace/*.json`)里留了 planner / writer / storyboarder 的快照,可以在**不重跑 LLM** 的前提下改 3 类东西。`--rebuild` 附加动作是从 snapshot 直接重新渲染 `script.rpy` + 跑 QA lint:
 
 ```powershell
@@ -108,6 +129,8 @@ node --env-file=.env dist/cli.js modify shots sakura-night `
 # 纯重渲染(不改 snapshot,比如手改了 workspace JSON 后重建)
 node --env-file=.env dist/cli.js rebuild sakura-night
 ```
+
+> v0.8 会迁走 `modify character/dialogue/shots`(见 `src/pipeline/modify.ts` 的 `@deprecated` 注释)。新项目请用 `v5-modify`。
 
 ## RunningHub 真 key smoke
 
@@ -146,3 +169,20 @@ node --env-file=.env scripts/runninghub-smoke.mjs CHARACTER_MAIN_IMAGE SCENE_BAC
 ## 资产生成后端
 
 走 [RunningHub](https://www.runninghub.cn/) 一个 API key,同时供图 / 视频 / 音频模型。8 个 AppKey 的 schema 登记在 [src/executers/common/runninghub-schemas.ts](src/executers/common/runninghub-schemas.ts)。
+
+---
+
+## 环境变量速查
+
+| 变量 | 必需? | 说明 |
+| --- | --- | --- |
+| `CLAUDE_CODE_USE_BEDROCK` | 二选一 | `1` = 走 AWS Bedrock(推荐);空/注释 = 走 Anthropic 直连 |
+| `AWS_REGION` | Bedrock 必需 | 默认 `us-east-1` |
+| `AWS_BEARER_TOKEN_BEDROCK` | Bedrock 必需 | Bedrock bearer token |
+| `ANTHROPIC_API_KEY` | 直连必需 | 只在 `CLAUDE_CODE_USE_BEDROCK` 未开时用 |
+| `CLAUDE_MODEL` | 可选 | 覆盖默认模型,Bedrock 下默认 `us.anthropic.claude-sonnet-4-6`(inference profile) |
+| `RUNNINGHUB_API_KEY` | 真资产必需 | v0.3+ 图/视频/音频生成;v0.7 的 `v5` 若无此 key 会 fallback 到 DRY_RUN stub |
+| `CLAUDE_BEDROCK_CACHE` | 可选 | `0` 关闭 Bedrock prompt cache(默认开)。v0.7 起 system 段已膨胀 > 4096 chars,cache read share 实测 ~72% |
+| `CLAUDE_DISABLE_CACHE` | 可选 | `1` 双模式总开关(直连 + Bedrock)全关 cache |
+
+> v0.7 的 `v5` 子命令默认启用 prompt cache,并在 `runtime/games/<story>/logs/v5-smoke-summary-*.json` 里记录 `budgetCapUsd` / `budgetCappedEarly` / `taskAgentTimeouts`。真 key 验收脚本 `scripts/v5-real-key-smoke.mjs --budget-cap <usd>` 是官方的 release gate,任何 merge 前都应确认它干净跑通。
