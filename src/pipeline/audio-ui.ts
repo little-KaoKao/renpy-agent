@@ -22,6 +22,7 @@ import type { RunningHubClient } from '../executers/common/runninghub-client.js'
 import type { FetchLike } from '../assets/download.js';
 import type {
   PlannerOutput,
+  ShotEffect,
   StoryboarderOutput,
   WriterOutput,
 } from './types.js';
@@ -190,17 +191,24 @@ function planVoiceLines(
   return plan;
 }
 
+// `shot.effects` is a particle-overlay enum; audible effects (door / wind /
+// footsteps) still arrive as free prose on the legacy `effects_raw` field
+// preserved by the storyboard normalizer.
+const ENUM_SFX_DESCRIPTION: Partial<Record<ShotEffect, string>> = {
+  rain: 'rain ambience',
+  snow: 'soft snow drift',
+};
+
 function planSfxCues(storyboarder: StoryboarderOutput) {
   const plan: Array<{ shotNumber: number; cue: SfxCue; description: string }> = [];
   for (const shot of storyboarder.shots) {
-    const effects = (shot.effects ?? '').toLowerCase();
-    const matched = SFX_KEYWORDS.find((kw) => effects.includes(kw));
-    if (!matched) continue;
-    plan.push({
-      shotNumber: shot.shotNumber,
-      cue: 'enter',
-      description: shot.effects ?? matched,
-    });
+    const raw = (shot.effects_raw ?? '').toLowerCase();
+    const keywordHit = SFX_KEYWORDS.find((kw) => raw.includes(kw));
+    const enumHit = shot.effects.find((e) => ENUM_SFX_DESCRIPTION[e] !== undefined);
+    if (!keywordHit && !enumHit) continue;
+    const description =
+      shot.effects_raw ?? (enumHit ? ENUM_SFX_DESCRIPTION[enumHit]! : keywordHit ?? 'ambient');
+    plan.push({ shotNumber: shot.shotNumber, cue: 'enter', description });
   }
   return plan;
 }

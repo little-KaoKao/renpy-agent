@@ -38,10 +38,10 @@ const STORYBOARDER_FIXTURE: StoryboarderOutput = {
       description: 'whispers under sakura',
       characters: ['白樱'],
       sceneName: 'sakura_night',
-      staging: 'enter',
-      transforms: 'stand breathing',
+      staging: 'solo_center',
+      transform: 'stand',
       transition: 'fade',
-      effects: 'sakura particles',
+      effects: ['sakura'],
       dialogueLines: [
         { speaker: '白樱', text: '你又来了。' },
         { speaker: 'narrator', text: '她的声音像晚风。' },
@@ -52,9 +52,10 @@ const STORYBOARDER_FIXTURE: StoryboarderOutput = {
       description: 'lean in close',
       characters: ['白樱'],
       sceneName: 'sakura_night',
-      staging: 'front',
-      transforms: 'lean in',
+      staging: 'solo_center',
+      transform: 'front',
       transition: 'dissolve',
+      effects: [],
       dialogueLines: [{ speaker: '白樱', text: '别走。' }],
     },
     {
@@ -62,9 +63,10 @@ const STORYBOARDER_FIXTURE: StoryboarderOutput = {
       description: 'classroom flashback',
       characters: ['Mia'],
       sceneName: 'classroom',
-      staging: 'lookup',
-      transforms: 'heart_pulse',
+      staging: 'solo_center',
+      transform: 'heart_pulse',
       transition: 'fade',
+      effects: [],
       dialogueLines: [{ speaker: 'Mia', text: 'Remember the spring?' }],
     },
   ],
@@ -143,9 +145,10 @@ describe('renderScriptRpy', () => {
           description: 'x',
           characters: ['白樱'],
           sceneName: 'sakura_night',
-          staging: 'enter',
-          transforms: 'stand',
+          staging: 'solo_center',
+          transform: 'stand',
           transition: 'none',
+          effects: [],
           dialogueLines: [{ speaker: '白樱', text: 'She said "hi"' }],
         },
       ],
@@ -209,9 +212,10 @@ describe('renderScriptRpy with AssetRegistry (Stage B binding)', () => {
           description: 'opening title sweep',
           characters: [],
           sceneName: 'sakura_night',
-          staging: 'enter',
-          transforms: 'reset',
+          staging: 'solo_center',
+          transform: 'reset',
           transition: 'fade',
+          effects: [],
           cutscene: { kind: 'transition', motionPrompt: 'slow dolly through cherry blossoms' },
           dialogueLines: [{ speaker: 'narrator', text: '春の夜、ひらり。' }],
         },
@@ -220,9 +224,10 @@ describe('renderScriptRpy with AssetRegistry (Stage B binding)', () => {
           description: 'first words after the cut',
           characters: ['白樱'],
           sceneName: 'sakura_night',
-          staging: 'front',
-          transforms: 'stand breathing',
+          staging: 'solo_center',
+          transform: 'stand',
           transition: 'dissolve',
+          effects: [],
           dialogueLines: [{ speaker: '白樱', text: '你来了。' }],
         },
       ],
@@ -246,9 +251,10 @@ describe('renderScriptRpy with AssetRegistry (Stage B binding)', () => {
           description: 'confession CG',
           characters: ['白樱'],
           sceneName: 'sakura_night',
-          staging: 'front',
-          transforms: 'lean in',
+          staging: 'solo_center',
+          transform: 'front',
           transition: 'fade',
+          effects: [],
           cutscene: { kind: 'reference', motionPrompt: 'tearful embrace' },
           dialogueLines: [{ speaker: 'narrator', text: 'それは誓い。' }],
         },
@@ -364,6 +370,102 @@ describe('renderScriptRpy audio + UI insertion (v0.5)', () => {
     };
     const script = renderScriptRpy(PLANNER_FIXTURE, STORYBOARDER_FIXTURE, registry);
     expect(script).toContain('play sound "audio/sfx/shot_1_enter.mp3"');
+  });
+});
+
+describe('renderScriptRpy — v0.7 enum transforms', () => {
+  it('emits ATL definitions for all 6 new transforms', () => {
+    const script = renderScriptRpy(PLANNER_FIXTURE, STORYBOARDER_FIXTURE);
+    expect(script).toContain('transform pan_left:');
+    expect(script).toContain('transform pan_right:');
+    expect(script).toContain('transform fade_in:');
+    expect(script).toContain('transform fade_out:');
+    expect(script).toContain('transform shake:');
+    expect(script).toContain('transform blink:');
+  });
+
+  it('dispatches pan_left to `at pan_left` on sprite show', () => {
+    const sb: StoryboarderOutput = {
+      shots: [
+        {
+          shotNumber: 1,
+          description: 'camera pans to find her',
+          characters: ['白樱'],
+          sceneName: 'sakura_night',
+          staging: 'solo_left',
+          transform: 'pan_left',
+          transition: 'fade',
+          effects: [],
+          dialogueLines: [{ speaker: '白樱', text: '...' }],
+        },
+      ],
+    };
+    const script = renderScriptRpy(PLANNER_FIXTURE, sb);
+    expect(script).toMatch(/show sprite_\w+ at pan_left/);
+  });
+
+  it('dispatches fade_in to `at fade_in` on sprite show', () => {
+    const sb: StoryboarderOutput = {
+      shots: [
+        {
+          shotNumber: 1,
+          description: 'she materializes',
+          characters: ['白樱'],
+          sceneName: 'sakura_night',
+          staging: 'solo_center',
+          transform: 'fade_in',
+          transition: 'dissolve',
+          effects: [],
+          dialogueLines: [{ speaker: '白樱', text: '来了。' }],
+        },
+      ],
+    };
+    const script = renderScriptRpy(PLANNER_FIXTURE, sb);
+    expect(script).toMatch(/show sprite_\w+ at fade_in/);
+  });
+
+  it('dispatches shake to `at shake` on sprite show', () => {
+    const sb: StoryboarderOutput = {
+      shots: [
+        {
+          shotNumber: 1,
+          description: 'impact beat',
+          characters: ['白樱'],
+          sceneName: 'sakura_night',
+          staging: 'solo_center',
+          transform: 'shake',
+          transition: 'none',
+          effects: [],
+          dialogueLines: [{ speaker: '白樱', text: '!' }],
+        },
+      ],
+    };
+    const script = renderScriptRpy(PLANNER_FIXTURE, sb);
+    expect(script).toMatch(/show sprite_\w+ at shake/);
+  });
+
+  it('accepts legacy free-string storyboards and still renders (M5 smoke-v5 compat)', () => {
+    // Simulates M5's runtime/games/smoke-v5/workspace/storyboard.json shape.
+    const legacy = {
+      shots: [
+        {
+          shotNumber: 1,
+          description: 'legacy shot from pre-v0.7 workspace',
+          characters: ['白樱'],
+          sceneName: 'sakura_night',
+          staging: 'enter',
+          transforms: 'stand breathing',
+          transition: 'fade',
+          effects: 'sakura particles',
+          dialogueLines: [{ speaker: '白樱', text: '...' }],
+        },
+      ],
+    } as unknown as StoryboarderOutput;
+    const script = renderScriptRpy(PLANNER_FIXTURE, legacy);
+    expect(script).toContain('label start:');
+    expect(script).toMatch(/show sprite_\w+ at stand/);
+    // sakura keyword in prose should still route to the particle overlay.
+    expect(script).toContain('show sakura');
   });
 });
 
