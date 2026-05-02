@@ -14,7 +14,7 @@ import {
   reorderShots,
 } from './pipeline/modify.js';
 import { rebuildGameProject } from './pipeline/rebuild.js';
-import { runV5 } from './agents/run-v5.js';
+import { runV5, runV5Modify } from './agents/run-v5.js';
 import { createFileLogger, logsDirForGame, type FileLogger } from './pipeline/logger.js';
 
 export type ParsedCliCommand =
@@ -56,10 +56,16 @@ export type ParsedCliCommand =
       readonly order: ReadonlyArray<number>;
       readonly rebuild: boolean;
     }
+  | {
+      readonly kind: 'v5-modify';
+      readonly storyName: string;
+      readonly modifyIntent: string;
+      readonly budgetCapUsd?: number;
+    }
   | { readonly kind: 'rebuild'; readonly storyName: string }
   | { readonly kind: 'help' };
 
-const KNOWN_SUBCOMMANDS = new Set(['generate', 'modify', 'rebuild', 'v5']);
+const KNOWN_SUBCOMMANDS = new Set(['generate', 'modify', 'rebuild', 'v5', 'v5-modify']);
 
 export function parseArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
   if (argv.some((a) => a === '--help' || a === '-h')) return { kind: 'help' };
@@ -68,6 +74,7 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
   if (head === 'modify') return parseModifyArgs(argv.slice(1));
   if (head === 'rebuild') return parseRebuildArgs(argv.slice(1));
   if (head === 'v5') return parseV5Args(argv.slice(1));
+  if (head === 'v5-modify') return parseV5ModifyArgs(argv.slice(1));
   // Legacy form: `renpy-agent <inspiration...>` with optional --name / --audio-ui.
   if (head !== undefined && KNOWN_SUBCOMMANDS.has(head)) {
     // Should be unreachable given the checks above, but makes the type narrow tight.
@@ -168,6 +175,55 @@ function parseRebuildArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
   return { kind: 'rebuild', storyName };
 }
 
+function parseV5ModifyArgs(argv: ReadonlyArray<string>): ParsedCliCommand {
+  const storyName = argv[0];
+  if (!storyName || storyName.startsWith('-')) {
+    throw new Error(
+      'v5-modify: <story> is required (e.g. `renpy-agent v5-modify my-story "change X to Y"`)',
+    );
+  }
+  const rest = argv.slice(1);
+  // Pull `--budget-cap <n>` flags out, leave positional intent text alone. We
+  // intentionally do NOT share readFlags() — v5-modify's intent is free-form
+  // text that may contain dashes / URLs / punctuation, and readFlags() would
+  // choke on the first positional.
+  const intentParts: string[] = [];
+  let budgetCapUsd: number | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i]!;
+    if (arg === '--budget-cap') {
+      const next = rest[i + 1];
+      if (next === undefined) throw new Error('v5-modify: --budget-cap requires a numeric value');
+      budgetCapUsd = parseBudgetCap(next);
+      i++;
+    } else if (arg.startsWith('--budget-cap=')) {
+      budgetCapUsd = parseBudgetCap(arg.slice('--budget-cap='.length));
+    } else {
+      intentParts.push(arg);
+    }
+  }
+  const modifyIntent = intentParts.join(' ').trim();
+  if (!modifyIntent) {
+    throw new Error(
+      'v5-modify: <intent> is required (e.g. `renpy-agent v5-modify my-story "change Baiying to short hair"`)',
+    );
+  }
+  return {
+    kind: 'v5-modify',
+    storyName,
+    modifyIntent,
+    ...(budgetCapUsd !== undefined ? { budgetCapUsd } : {}),
+  };
+}
+
+function parseBudgetCap(raw: string): number {
+  const n = Number.parseFloat(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`v5-modify: --budget-cap expects a positive number, got "${raw}"`);
+  }
+  return n;
+}
+
 function parseV5Args(argv: ReadonlyArray<string>): ParsedCliCommand {
   let storyName: string | undefined;
   const positional: string[] = [];
@@ -258,6 +314,8 @@ const HELP_TEXT = `Usage:
   renpy-agent modify shots     <story> --order 3,1,2,4,5,6,7,8 [--rebuild]
   renpy-agent rebuild <story>
   renpy-agent v5 [--story <slug>] <inspiration text>       (V5 Planner/Executer, Design §0)
+  renpy-agent v5-modify <story> "<intent>" [--budget-cap <usd>]
+                                                           (V5 Planner-driven modify chain, plan §5.5)
   renpy-agent -h | --help
 
 Legacy form (still supported):
@@ -283,6 +341,9 @@ Options:
                   LLM stages. Lets you recover from a mid-pipeline failure
                   without re-burning tokens on stages that already succeeded.
   --rebuild       After a modify, regenerate script.rpy and run QA.
+  --budget-cap    For v5-modify: USD safety cap on cumulative LLM spend. When
+                  the next chat would exceed this cap, the run stops early with
+                  budgetCappedEarly=true. Typical: 1-3 for simple modify intents.
   -h, --help      Show this help
 
 Environment:
@@ -306,6 +367,7 @@ export async function main(argv: ReadonlyArray<string>): Promise<number> {
   if (cmd.kind === 'generate') return runGenerate(cmd);
   if (cmd.kind === 'modify') return runModify(cmd);
   if (cmd.kind === 'v5') return runV5Command(cmd);
+  if (cmd.kind === 'v5-modify') return runV5ModifyCommand(cmd);
   return runRebuild(cmd);
 }
 
@@ -313,6 +375,7 @@ type GenerateCommand = Extract<ParsedCliCommand, { kind: 'generate' }>;
 type ModifyCommand = Extract<ParsedCliCommand, { kind: 'modify' }>;
 type RebuildCommand = Extract<ParsedCliCommand, { kind: 'rebuild' }>;
 type V5Command = Extract<ParsedCliCommand, { kind: 'v5' }>;
+type V5ModifyCommand = Extract<ParsedCliCommand, { kind: 'v5-modify' }>;
 
 async function runGenerate(cmd: GenerateCommand): Promise<number> {
   if (!cmd.inspiration) {
@@ -477,6 +540,51 @@ async function runV5Command(cmd: V5Command): Promise<number> {
     return 0;
   } catch (err) {
     console.error(`\n❌ V5 run failed: ${String((err as Error).message)}`);
+    return 1;
+  } finally {
+    await logger.flush();
+  }
+}
+
+async function runV5ModifyCommand(cmd: V5ModifyCommand): Promise<number> {
+  const gameDir = gameDirFor(cmd.storyName);
+  const llm = new ClaudeLlmClient();
+  const logger: FileLogger = createFileLogger(logsDirForGame(gameDir));
+
+  let runningHubClient: RunningHubClient | undefined;
+  const rhKey = process.env.RUNNINGHUB_API_KEY;
+  if (rhKey) {
+    runningHubClient = new HttpRunningHubClient({
+      apiKey: rhKey,
+      appSchemas: RUNNINGHUB_APP_SCHEMAS,
+    });
+  }
+
+  try {
+    const result = await runV5Modify({
+      storyName: cmd.storyName,
+      modifyIntent: cmd.modifyIntent,
+      llm,
+      gameDir,
+      logger,
+      ...(runningHubClient !== undefined ? { runningHubClient } : {}),
+      ...(cmd.budgetCapUsd !== undefined ? { budgetCapUsd: cmd.budgetCapUsd } : {}),
+    });
+    console.log(`\n✅ V5 modify complete. Game at: ${result.gameDir}`);
+    console.log(`   Intent: ${result.modifyIntent}`);
+    console.log(`   Planner tasks: ${result.plannerTaskCount}`);
+    console.log(`   Final summary: ${result.finalSummary}`);
+    console.log(`   Cost: $${result.totalCostUsd.toFixed(4)}`);
+    if (result.budgetCappedEarly) {
+      console.warn('   ⚠️  Stopped early due to budget cap.');
+    }
+    console.log(`   Run:  renpy-sdk/renpy.exe "${result.gameDir}"`);
+    return 0;
+  } catch (err) {
+    const message = (err as NodeJS.ErrnoException).code === 'ENOENT'
+      ? storyNotFoundMessage(cmd.storyName)
+      : String((err as Error).message);
+    console.error(`\n❌ V5 modify failed: ${message}`);
     return 1;
   } finally {
     await logger.flush();
