@@ -23,6 +23,8 @@ import { mkdir, writeFile, appendFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ClaudeLlmClient } from '../dist/llm/claude-client.js';
 import { runV5 } from '../dist/agents/run-v5.js';
+import { HttpRunningHubClient } from '../dist/executers/common/runninghub-client.js';
+import { RUNNINGHUB_APP_SCHEMAS } from '../dist/executers/common/runninghub-schemas.js';
 
 const STORY_NAME = 'smoke-v5';
 const INSPIRATION = '一个樱花树下的告白故事';
@@ -248,7 +250,8 @@ async function main() {
   console.log(`taskAgentTimeout: ${cli.taskAgentTimeoutMs} ms`);
   console.log(
     '\n⚠️  This will burn real Bedrock + RunningHub tokens.\n' +
-      '    Expected cost: Planner + Executers × 7 tasks ≈ $0.5 – $1.0.\n' +
+      '    Expected cost (v0.7 + real task-agents): $3 – $8 depending on cache hits\n' +
+      '    and how many images/backgrounds the Planner chooses to generate.\n' +
       `    Hard cap: $${cli.budgetCapUsd} (pass --budget-cap <usd> to change).\n` +
       '    Press Ctrl-C within 3s to abort...',
   );
@@ -258,6 +261,11 @@ async function main() {
   const baseLlm = new ClaudeLlmClient();
   const llm = wrapLlmClient(baseLlm, tracer);
   const logger = makeFileLogger(tracer);
+
+  const runningHubClient = new HttpRunningHubClient({
+    apiKey: process.env.RUNNINGHUB_API_KEY,
+    appSchemas: RUNNINGHUB_APP_SCHEMAS,
+  });
 
   tracer.append({
     type: 'run_start',
@@ -279,8 +287,11 @@ async function main() {
       logger,
       budgetCapUsd: cli.budgetCapUsd,
       taskAgentTimeoutMs: cli.taskAgentTimeoutMs,
-      // Don't inject taskAgents — v0.6 default behavior; characters/scenes
-      // will route through stub hints and end up in `placeholder` state.
+      // v0.7: inject the RunningHub client so run-v5 bootstraps the real
+      // task-agents (character_prompt_expander / character_main_image_generator
+      // / scene_background_generator). Without this the bootstrap falls back
+      // to DRY_RUN and no real images would be produced.
+      runningHubClient,
     });
   } catch (err) {
     runError = err;

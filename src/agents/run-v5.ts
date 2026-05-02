@@ -13,6 +13,7 @@ import type { CommonToolContext, TaskAgentRegistry } from './common-tools.js';
 import { workspaceDirForGame } from './workspace-index.js';
 import { BudgetExceededError, BudgetTracker, wrapLlmClientWithBudget } from './budget.js';
 import { appendPlannerMemory } from './memory.js';
+import { buildDefaultTaskAgents } from '../executers/task-agents/index.js';
 
 export interface RunV5Params {
   readonly storyName: string;
@@ -87,12 +88,34 @@ export async function runV5(params: RunV5Params): Promise<RunV5Result> {
   const wrappedLlm = wrapLlmClientWithBudget(params.llm, tracker);
   const logger = params.logger ?? defaultLogger();
 
+  // Bootstrap default task-agents (§5.4). When the caller passes `taskAgents`
+  // explicitly (scripted tests) honour that; otherwise inject the 3 real agents
+  // and let each call switch to DRY_RUN via input hint or env. When neither
+  // runningHubClient nor RUNNINGHUB_API_KEY is available, fall back to a
+  // force-DRY_RUN registry so the call_task_agent path still exercises end-to-
+  // end, but no real money is spent.
+  const hasRhKey = Boolean(process.env.RUNNINGHUB_API_KEY);
+  const canRunReal = params.runningHubClient !== undefined && hasRhKey;
+  let taskAgents: TaskAgentRegistry;
+  if (params.taskAgents !== undefined) {
+    taskAgents = params.taskAgents;
+  } else if (canRunReal) {
+    taskAgents = buildDefaultTaskAgents(false);
+  } else {
+    logger.warn('task_agents.dry_run_fallback', {
+      reason: params.runningHubClient === undefined
+        ? 'no runningHubClient injected'
+        : 'RUNNINGHUB_API_KEY env not set',
+    });
+    taskAgents = buildDefaultTaskAgents(true);
+  }
+
   const ctx: CommonToolContext = {
     storyName: params.storyName,
     gameDir: params.gameDir,
     workspaceDir,
     memoryDir,
-    taskAgents: params.taskAgents ?? {},
+    taskAgents,
     logger,
     llm: wrappedLlm,
     ...(params.runningHubClient !== undefined
