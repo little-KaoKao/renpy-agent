@@ -145,14 +145,16 @@ describe('runExecuterTask', () => {
 
   it('errors out after maxTurns without a finish', async () => {
     const ctx = await makeCtx();
+    // Use the exempt tool read_from_uri so the soft limit doesn't short-circuit
+    // before we hit maxTurns.
     const llm = scriptedLlm(
       Array.from({ length: 10 }, (_, n) => ({
         content: [
           {
             type: 'tool_use' as const,
             id: `tu_${n}`,
-            name: 'create_project',
-            input: { title: 'T', genre: 'g', tone: 't' },
+            name: 'read_from_uri',
+            input: { uri: 'workspace://project' },
           },
         ],
         stopReason: 'tool_use' as const,
@@ -169,5 +171,108 @@ describe('runExecuterTask', () => {
         maxTurns: 3,
       }),
     ).rejects.toThrow(/maxTurns/);
+  });
+
+  it('refuses a 3rd invocation of the same non-exempt tool and lets LLM finish', async () => {
+    const ctx = await makeCtx();
+    const warnSpy = ctx.logger.warn as ReturnType<typeof vi.fn>;
+    const responses: LlmToolChatResponse[] = [1, 2, 3].map((n) => ({
+      content: [
+        {
+          type: 'tool_use' as const,
+          id: `tu_p${n}`,
+          name: 'create_project',
+          input: { title: `T${n}`, genre: 'g', tone: 't' },
+        },
+      ],
+      stopReason: 'tool_use' as const,
+      usage: { inputTokens: 1, outputTokens: 1 },
+    }));
+    responses.push({
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tu_f',
+          name: 'output_with_finish',
+          input: { taskId: 'p', taskSummary: 'partial' },
+        },
+      ],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    const llm = scriptedLlm(responses);
+
+    const result = await runExecuterTask({
+      pocRole: 'producer',
+      userBrief: 'spam create_project',
+      llm,
+      ctx,
+      maxTurns: 10,
+    });
+
+    expect(result.taskSummary).toBe('partial');
+
+    const fourthCallArgs = (llm.chatWithTools as any).mock.calls[3][0];
+    const toolResults = fourthCallArgs.messages
+      .filter((m: any) => m.role === 'user' && Array.isArray(m.content))
+      .flatMap((m: any) => m.content)
+      .filter((b: any) => b.type === 'tool_result');
+    const refusal = toolResults.find((r: any) => r.toolUseId === 'tu_p3');
+    expect(refusal).toBeDefined();
+    expect(refusal.isError).toBe(true);
+    const parsed = JSON.parse(refusal.content);
+    expect(parsed.retry).toBe(false);
+    expect(parsed.error).toMatch(/refusing to execute/);
+    expect(parsed.guidance).toMatch(/output_with_finish/);
+
+    const softLimitHits = warnSpy.mock.calls.filter(
+      (c) => c[0] === 'executer.soft_limit_hit',
+    );
+    expect(softLimitHits).toHaveLength(1);
+    expect(softLimitHits[0]![1]).toMatchObject({ tool: 'create_project', count: 3 });
+  });
+
+  it('exempts read_from_uri from the per-tool soft limit', async () => {
+    const ctx = await makeCtx();
+    const warnSpy = ctx.logger.warn as ReturnType<typeof vi.fn>;
+    const responses: LlmToolChatResponse[] = [1, 2, 3, 4, 5].map((n) => ({
+      content: [
+        {
+          type: 'tool_use' as const,
+          id: `tu_r${n}`,
+          name: 'read_from_uri',
+          input: { uri: 'workspace://project' },
+        },
+      ],
+      stopReason: 'tool_use' as const,
+      usage: { inputTokens: 1, outputTokens: 1 },
+    }));
+    responses.push({
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tu_rf',
+          name: 'output_with_finish',
+          input: { taskId: 'r', taskSummary: 'read pass' },
+        },
+      ],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    const llm = scriptedLlm(responses);
+
+    const result = await runExecuterTask({
+      pocRole: 'producer',
+      userBrief: 'read repeatedly',
+      llm,
+      ctx,
+      maxTurns: 20,
+    });
+
+    expect(result.taskSummary).toBe('read pass');
+    const softLimitHits = warnSpy.mock.calls.filter(
+      (c) => c[0] === 'executer.soft_limit_hit',
+    );
+    expect(softLimitHits).toHaveLength(0);
   });
 });

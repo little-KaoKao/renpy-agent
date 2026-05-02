@@ -89,6 +89,18 @@ const COMMON_EXECUTER_SCHEMAS: ReadonlyArray<LlmToolSchema> = [
   },
 ];
 
+// Tools exempt from the per-tool soft limit — repeating these in one handoff
+// is legitimate (read_from_uri walks many URIs; plan/finish are emit-once but
+// cheap if the LLM retries). All other tool names are capped at 2 calls per
+// handoff to stop Executer-level repeat-emit (plan §9).
+const SOFT_LIMIT_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
+  'read_from_uri',
+  'output_with_plan',
+  'output_with_finish',
+]);
+
+const PER_TOOL_SOFT_LIMIT = 2;
+
 const COMMON_EXECUTER_EXECUTORS: Readonly<Record<string, ToolExecutor>> = {
   output_with_plan: (args, ctx) =>
     output_with_plan(args as { taskId: string; plan: string }, ctx) as Promise<
@@ -157,6 +169,7 @@ export async function runExecuterTask(
 
   let lastFinishSummary: string | null = null;
   let lastStopReason: LlmStopReason = 'end_turn';
+  const toolCallCounts = new Map<string, number>();
 
   for (let turn = 0; turn < maxTurns; turn++) {
     const res = await params.llm.chatWithTools({
@@ -190,6 +203,33 @@ export async function runExecuterTask(
     // Execute every tool_use, collect tool_results.
     const toolResults: LlmToolResultBlock[] = [];
     for (const tu of toolUses) {
+      // Per-tool soft limit: after PER_TOOL_SOFT_LIMIT calls of the same name
+      // in one handoff, refuse further invocations and nudge the LLM to finish.
+      // Exempt tools (read_from_uri / output_with_plan / output_with_finish)
+      // bypass the counter entirely.
+      if (!SOFT_LIMIT_EXEMPT_TOOLS.has(tu.name)) {
+        const prev = toolCallCounts.get(tu.name) ?? 0;
+        const n = prev + 1;
+        toolCallCounts.set(tu.name, n);
+        if (n > PER_TOOL_SOFT_LIMIT) {
+          params.ctx.logger.warn('executer.soft_limit_hit', {
+            tool: tu.name,
+            count: n,
+          });
+          toolResults.push({
+            type: 'tool_result',
+            toolUseId: tu.id,
+            content: JSON.stringify({
+              error: `tool "${tu.name}" called ${n} times in this handoff; refusing to execute. Call output_with_finish now.`,
+              retry: false,
+              guidance: `You have already invoked ${tu.name} ${prev} times. Further invocations will not be executed. Call output_with_finish with a summary of what was accomplished, even if partial.`,
+            }),
+            isError: true,
+          });
+          continue;
+        }
+      }
+
       const executor = executors[tu.name];
       let resultContent: string;
       if (!executor) {
