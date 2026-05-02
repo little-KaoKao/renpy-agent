@@ -25,6 +25,7 @@ import {
 import { getPocDescriptor, type PocRole } from './poc-registry.js';
 import { getToolSetForRole } from './tool-binder.js';
 import type { ToolExecutor } from './tool-schema.js';
+import { SCHEMA_DIGEST } from '../schema/galgame-workspace.js';
 
 export const EXECUTER_SYSTEM_PROMPT = `You are one of the POCs (Points of Contact) on a Ren'Py galgame production team.
 You have just been handed off a specific task by the Planner. Follow these 7 rules:
@@ -38,6 +39,67 @@ You have just been handed off a specific task by the Planner. Follow these 7 rul
 6. You cannot hand off to another POC — only the Planner can. Finish your task and let Planner decide next.
 7. When the task is done, call output_with_finish with a 1-3 sentence summary that will be surfaced to the Planner.
 `;
+
+const EXECUTER_SHARED_DISCIPLINE = `Shared discipline for all POCs (Executer-level policies enforced in code):
+
+- Per-tool soft limit: within a single handoff, any non-exempt tool may be
+  invoked at most 2 times. The exempt set is { read_from_uri, output_with_plan,
+  output_with_finish }. Calling a tool a 3rd time returns an isError:true
+  tool_result with retry:false — the Executer will refuse to dispatch. When you
+  hit that error, stop retrying and call output_with_finish with whatever
+  partial progress you have. Do not paraphrase the same tool with different
+  arguments hoping the counter resets — it is keyed on tool name, not args.
+
+- read_from_uri is free (not counted toward the per-tool limit) but each
+  successful read increments a per-handoff counter exposed to downstream tools.
+  qa.run_qa uses this counter to enforce a minimum-read quota before it will
+  lint. When in doubt, read more URIs — it is the cheapest guardrail.
+
+- Tool errors are either retriable or terminal. If tool_result contains
+  retry:false, do NOT re-invoke the same tool; switch strategy or finish.
+  If retry is absent or true, you may try once more with adjusted arguments.
+
+- Parallel tool_use blocks in a single assistant turn are allowed but
+  discouraged — they complicate retry logic and share the per-tool counter.
+  Prefer one tool per turn.
+
+- output_with_plan is optional and audit-only; the host records it in
+  planner_memories but never parses it. Use it only to declare intent at the
+  start of a complex task, not as a running commentary.
+
+- output_with_finish is the ONLY way to end this handoff. Its taskSummary is
+  surfaced verbatim to the Planner as the handoff tool_result — keep it to
+  1-3 sentences, lead with what was delivered (document URIs / asset counts)
+  and flag anything the Planner should re-handoff for (e.g. "shot 3 needs
+  writer revision").
+
+- You cannot read arbitrary filesystem paths; only workspace:// URIs resolve.
+  Images / fonts / gui assets are owned by the coder — do not try to read them
+  directly from your role, reference the registry entry instead.
+`;
+
+export function buildCacheableSystemPrompt(
+  role: PocRole,
+  description: string,
+  schemas: ReadonlyArray<LlmToolSchema>,
+): string {
+  return [
+    EXECUTER_SYSTEM_PROMPT,
+    '',
+    `Your role: ${role}`,
+    description,
+    '',
+    'Role-specific tools available to you:',
+    ...schemas.map((s) => `- ${s.name}: ${s.description}`),
+    '',
+    '---',
+    EXECUTER_SHARED_DISCIPLINE,
+    '---',
+    'Workspace schema reference (for cross-document reasoning):',
+    '',
+    SCHEMA_DIGEST,
+  ].join('\n');
+}
 
 const COMMON_EXECUTER_SCHEMAS: ReadonlyArray<LlmToolSchema> = [
   {
@@ -160,16 +222,14 @@ export async function runExecuterTask(
   };
 
   // Cacheable static segment:7 rules + POC identity + role-specific tool-set
-  // 说明。对同一个 pocRole 的每次 handoff 都一样,天然适合 prompt cache。
-  const cacheableSystemPrompt = [
-    EXECUTER_SYSTEM_PROMPT,
-    '',
-    `Your role: ${poc.role}`,
+  // 说明 + Executer-level 纪律条款 + workspace schema digest。对同一个 pocRole 的
+  // 每次 handoff 都一样,天然适合 prompt cache,且总长已膨胀过 Anthropic 的
+  // 4096-char cache 门槛。
+  const cacheableSystemPrompt = buildCacheableSystemPrompt(
+    poc.role,
     poc.description,
-    '',
-    'Role-specific tools available to you:',
-    ...set.schemas.map((s) => `- ${s.name}: ${s.description}`),
-  ].join('\n');
+    set.schemas,
+  );
 
   const messages: LlmToolMessage[] = [
     { role: 'system', content: cacheableSystemPrompt, cacheControl: { type: 'ephemeral' } },

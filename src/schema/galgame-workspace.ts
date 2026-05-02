@@ -342,3 +342,128 @@ export type WorkspaceDocument =
   | Storyboard | Cutscene
   | BgmTrack | VoiceLine | Sfx | UiDesign
   | RpyFile | AssetRegistry | TestRun | BugReport;
+
+// ---------------------------------------------------------------------------
+// SCHEMA_DIGEST — human-readable summary of the workspace schema.
+//
+// Consumed by Planner / Executer as a static, prompt-cacheable block. It must
+// stay identical across runs (no timestamps, no slugs, no project-specific
+// data) so that the Anthropic prompt cache can reuse the same cache segment
+// across Planner/Executer LLM calls and across smoke runs.
+//
+// Intentionally hand-written (NOT derived from the TypeScript source above):
+// the source carries JSDoc/implementation notes irrelevant to the Planner, and
+// a compiled-from-source digest would drift whenever comments change — breaking
+// cache hits and burning tokens. If you add a new DocumentKind or change a
+// reference relationship, update the digest by hand and the matching fields
+// above in the same commit.
+// ---------------------------------------------------------------------------
+
+export const SCHEMA_DIGEST = `Workspace schema digest — 19 DocumentKinds, grouped by owning POC role.
+
+URI grammar:
+  workspace://<kind>                     (singleton — at most one per project)
+  workspace://<kind>/<slug>              (collection — many per project, slug is
+                                          lowercase a-z0-9 with dashes, unique within kind)
+
+Singletons: project, chapter, script, storyboard, assetRegistry, testRun.
+Collections: character, scene, prop, route, ending, cutscene, bgmTrack, voiceLine,
+  sfx, uiDesign, rpyFile, bugReport, inspiration.
+  (inspiration is technically a collection but usually has exactly one entry.)
+
+-----
+Owner → DocumentKind mapping (who is allowed to mutate what):
+
+producer          → inspiration, project, chapter, route, ending
+writer            → script
+character_designer→ character (plus placeholder entries in assetRegistry)
+scene_designer    → scene, prop (plus placeholder entries in assetRegistry)
+storyboarder      → storyboard, cutscene
+music_director    → bgmTrack
+voice_director    → voiceLine
+sfx_designer      → sfx
+ui_designer       → uiDesign
+coder             → rpyFile, assetRegistry
+qa                → testRun, bugReport
+
+A POC reads any URI via read_from_uri but writes only to its own kinds. Planner
+owns none — it routes via handoff_to_agent and observes via read_from_uri.
+
+-----
+Reference edges (who points at whom, without copying data):
+
+project.inspirationUri          → inspiration
+chapter.projectUri              → project
+chapter.previousChapterUri?     → chapter  (for multi-chapter sequencing)
+route.projectUri                → project
+ending.routeUri                 → route
+script.chapterUri               → chapter
+script.characterUris[]          → character   (cast list for this chapter)
+storyboard.scriptUri            → script
+storyboard.characterUris[]      → character
+storyboard.sceneUris[]          → scene
+storyboard.shots[i].characterUris[] → character  (per-shot cast, subset of above)
+storyboard.shots[i].sceneUri?   → scene
+cutscene.storyboardUri          → storyboard
+rpyFile.storyboardUri           → storyboard
+rpyFile.assetRegistryUri        → assetRegistry
+rpyFile.cutsceneUris[]          → cutscene
+rpyFile.bgmTrackUris[]?         → bgmTrack
+rpyFile.voiceLineUris[]?        → voiceLine
+rpyFile.sfxUris[]?              → sfx
+rpyFile.uiDesignUris[]?         → uiDesign
+assetRegistry.rpyFileUri        → rpyFile
+testRun.rpyFileUri              → rpyFile
+bugReport.testRunUri            → testRun
+bgmTrack.projectUri / chapterUri? / routeUri? / sceneUri?
+voiceLine.scriptUri / characterUri
+sfx.storyboardUri / sceneUri?
+uiDesign.projectUri
+prop.sceneUri?
+
+Notable non-edge: script.scenes[i].characters is a name array, NOT a URI list;
+the characterUris edge is at the document level. Do not treat dialogue-line
+speaker strings as URIs.
+
+-----
+Placeholder / dirty-state model (Stage A vs Stage B):
+
+Every asset-bearing field pairs an optional *Uri with a PlaceholderInfo whose
+status is one of: placeholder | generating | ready | error.
+
+  Character.mainImageUri       + mainImagePlaceholder
+  Character.expressions[i].imageUri + .placeholder
+  Character.dynamicSpriteUri
+  Scene.backgroundUri          + backgroundPlaceholder
+  Scene.timeVariants[i].imageUri + .placeholder
+  Prop.imageUri                + imagePlaceholder
+  BgmTrack.audioUri            + audioPlaceholder
+  VoiceLine.audioUri           + audioPlaceholder
+  Sfx.audioUri                 + audioPlaceholder
+  Cutscene.videoUri            + videoPlaceholder
+
+Stage A ships with status="placeholder" everywhere (rendered as a grey square /
+silence); Stage B replaces each entry via swap_asset_placeholder (coder-owned
+tool). Modify-mode: when character_designer mutates visualDescription, the
+corresponding main_image / expression / dynamic_sprite registry entries drop
+back to status="placeholder" automatically. Do NOT re-handoff storyboarder/
+writer just because a character visual changed — the reference edges stay
+valid and Stage B regen handles the asset.
+
+-----
+Typical Stage A handoff order (use this as a default, not a rigid sequence):
+
+  producer (create_project, create_chapter)
+    → character_designer (per protagonist/supporting cast)
+    → scene_designer (per location the writer/storyboarder will need)
+    → writer (draft_script — reads chapter + characters + scenes)
+    → storyboarder (condense_to_shots — reads script, emits shot list)
+    → coder (write_game_project — assembles .rpy + registry)
+    → qa (run_qa — lint + cross-doc read; may kick_back_to_coder once)
+    → finish with taskSummary="no more tasks, Stage A delivered"
+
+Tier-2 POCs (music_director / voice_director / sfx_designer / ui_designer) are
+optional for Stage A; skip unless the brief explicitly asks for audio or UI
+polish.
+`;
+
