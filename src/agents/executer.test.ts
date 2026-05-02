@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { runExecuterTask } from './executer.js';
@@ -141,6 +141,74 @@ describe('runExecuterTask', () => {
       .filter((b: any) => b.type === 'tool_result');
     const firstResultText = JSON.stringify(toolResults[0].content);
     expect(firstResultText).toMatch(/error/i);
+  });
+
+  it('run_qa is rejected when QA never called read_from_uri first', async () => {
+    const ctx = await makeCtx();
+    // Seed a small workspace so buildWorkspaceIndex returns >0 docs (else
+    // Math.max(5, ceil(0*.5)) = 5 and quota still triggers, which is fine).
+    await mkdir(resolve(ctx.gameDir, '..', 'workspace'), { recursive: true });
+    await writeFile(
+      resolve(ctx.gameDir, '..', 'workspace', 'project.json'),
+      JSON.stringify({ title: 'P', status: 'draft' }),
+      'utf8',
+    );
+    const llm = scriptedLlm([
+      // Turn 1: QA calls run_qa without reading anything.
+      {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tu_1',
+            name: 'run_qa',
+            input: {},
+          },
+        ],
+        stopReason: 'tool_use',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+      // Turn 2: QA gives up and finishes (we only assert on turn 1's result).
+      {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tu_2',
+            name: 'output_with_finish',
+            input: { taskId: 'qa', taskSummary: 'aborted — need to read first' },
+          },
+        ],
+        stopReason: 'tool_use',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+    ]);
+
+    await runExecuterTask({
+      pocRole: 'qa',
+      userBrief: 'run QA on the assembled project',
+      llm,
+      ctx,
+      maxTurns: 5,
+    });
+
+    // Find the tool_result for the run_qa call (tu_1) across all chat calls.
+    // Note: vitest captures mock args by reference, so we scan every call.
+    const allCalls = (llm.chatWithTools as any).mock.calls;
+    const runQaResults: any[] = [];
+    for (const [args] of allCalls) {
+      for (const m of args.messages) {
+        if (m.role !== 'user' || !Array.isArray(m.content)) continue;
+        for (const b of m.content) {
+          if (b.type === 'tool_result' && b.toolUseId === 'tu_1') {
+            runQaResults.push(JSON.parse(b.content));
+          }
+        }
+      }
+    }
+    expect(runQaResults.length).toBeGreaterThan(0);
+    expect(runQaResults[0]).toMatchObject({
+      error: expect.stringMatching(/read.*docs.*before.*run_qa/i),
+      retry: false,
+    });
   });
 
   it('errors out after maxTurns without a finish', async () => {

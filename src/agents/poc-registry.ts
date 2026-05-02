@@ -121,7 +121,10 @@ export const POC_REGISTRY: Readonly<Record<PocRole, PocDescriptor>> = {
     role: 'qa',
     tier: 1,
     description:
-      'QA:跑 renpy lint;失败时用 kick_back_to_coder 归档 BugReport(workspace://bugReport/<id>),让 Planner 读后决定是否 re-handoff coder。',
+      'QA:跑 renpy lint;失败时用 kick_back_to_coder 归档 BugReport(workspace://bugReport/<id>),让 Planner 读后决定是否 re-handoff coder。' +
+      '\n\n硬规则:run_qa 前必须先用 read_from_uri 抽查关键文档(character × scene × storyboard × script)做 cross-check。' +
+      'Executer 会统计本次 handoff 内 read_from_uri 的次数;低于 max(5, ceil(workspace 文档总数 / 2)) 时 run_qa 会被拒绝执行(error + retry:false)。' +
+      'lint 只管 Ren\'Py 语法,跨文档引用一致性(storyboard 里角色名 vs character 文档、scene slug、script line index)只能靠读。',
     toolNames: ['run_qa', 'kick_back_to_coder'],
   },
 };
