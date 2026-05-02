@@ -189,11 +189,22 @@ export type {
   StoryboarderOutput,
   StoryboarderOutputShot,
   StoryboarderOutputCutscene,
+  ShotTransform,
+  ShotStaging,
+  ShotEffect,
+  ShotTransition,
   TestRunResult,
   PipelineResult,
   AudioUiPipelineStats,
   CutscenePipelineStats,
 } from './pipeline/types.js';
+export {
+  SHOT_TRANSFORMS,
+  SHOT_STAGING,
+  SHOT_EFFECTS,
+  SHOT_TRANSITIONS,
+} from './pipeline/types.js';
+export { normalizeShot, normalizeStoryboarderOutput } from './pipeline/shot-enum.js';
 
 export { runPlanner } from './pipeline/planner.js';
 export { runWriter } from './pipeline/writer.js';

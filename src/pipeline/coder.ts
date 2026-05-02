@@ -1,7 +1,7 @@
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import type { PlannerOutput, StoryboarderOutput } from './types.js';
+import type { PlannerOutput, ShotTransform, StoryboarderOutput } from './types.js';
 import type { AssetRegistryFile, AssetType } from '../assets/registry.js';
 import { findByLogicalKey } from '../assets/registry.js';
 import {
@@ -13,6 +13,7 @@ import {
   logicalKeyForVoiceLine,
 } from '../assets/logical-key.js';
 import { mergeUiPatches, type UiPatch } from './ui-merge.js';
+import { normalizeStoryboarderOutput } from './shot-enum.js';
 
 const SCENE_PALETTE = [
   '#1a2540', // deep night blue
@@ -137,12 +138,17 @@ export function renderScriptRpy(
   const charIdents = assignCharacterIdentifiers(planner.characters.map((c) => c.name));
   const sceneIdents = assignSceneIdentifiers(planner.scenes.map((s) => s.name));
 
+  // Legacy workspaces (pre-v0.7) have free-string fields instead of enums;
+  // `rebuild` loads them straight from disk so we must normalize here too,
+  // not only in `runStoryboarder`.
+  const normalized = normalizeStoryboarderOutput(storyboarder);
+
   const parts: string[] = [];
   parts.push(headerComment(planner.projectTitle));
   parts.push(renderImageDefinitions(planner, sceneIdents, charIdents, assetRegistry));
   parts.push(renderCharacterDefinitions(planner, charIdents));
   parts.push(renderTransforms());
-  parts.push(renderMainLabel(planner, storyboarder, charIdents, sceneIdents, assetRegistry));
+  parts.push(renderMainLabel(planner, normalized, charIdents, sceneIdents, assetRegistry));
   return parts.join('\n\n');
 }
 
@@ -212,7 +218,7 @@ function renderCharacterDefinitions(
 
 function renderTransforms(): string {
   return [
-    '# --- Shot transforms (modeled after baiying-demo) ---',
+    '# --- Shot transforms (baiying-demo + v0.7 additions) ---',
     'transform stand:',
     '    xalign 0.5 yalign 1.0',
     '    zoom 0.9',
@@ -246,6 +252,48 @@ function renderTransforms(): string {
     '',
     'transform reset_layer:',
     '    zoom 1.0',
+    '',
+    'transform pan_left:',
+    '    xalign 0.8 yalign 1.0',
+    '    zoom 0.95',
+    '    ease 1.2 xalign 0.2',
+    '',
+    'transform pan_right:',
+    '    xalign 0.2 yalign 1.0',
+    '    zoom 0.95',
+    '    ease 1.2 xalign 0.8',
+    '',
+    'transform fade_in:',
+    '    xalign 0.5 yalign 1.0',
+    '    zoom 0.9',
+    '    alpha 0.0',
+    '    ease 0.8 alpha 1.0',
+    '',
+    'transform fade_out:',
+    '    xalign 0.5 yalign 1.0',
+    '    zoom 0.9',
+    '    alpha 1.0',
+    '    ease 0.8 alpha 0.0',
+    '',
+    'transform shake:',
+    '    xalign 0.5 yalign 1.0',
+    '    zoom 0.9',
+    '    block:',
+    '        linear 0.05 xoffset 12',
+    '        linear 0.05 xoffset -12',
+    '        linear 0.05 xoffset 8',
+    '        linear 0.05 xoffset -8',
+    '        linear 0.05 xoffset 0',
+    '',
+    'transform blink:',
+    '    xalign 0.5 yalign 1.0',
+    '    zoom 0.9',
+    '    block:',
+    '        linear 0.2 alpha 0.0',
+    '        linear 0.2 alpha 1.0',
+    '        pause 0.3',
+    '        linear 0.2 alpha 0.0',
+    '        linear 0.2 alpha 1.0',
   ].join('\n');
 }
 
@@ -295,7 +343,7 @@ function renderMainLabel(
 
     const sceneIdent = sceneIdents.get(shot.sceneName);
     if (sceneIdent && sceneIdent !== activeScene) {
-      const transition = transitionToken(shot.transition);
+      const transition = shot.transition === 'none' ? null : shot.transition;
       lines.push(`    scene bg_${sceneIdent}${transition ? ` with ${transition}` : ''}`);
       activeScene = sceneIdent;
       // Opening a scene plays its BGM if the asset was generated; otherwise stay silent.
@@ -316,21 +364,21 @@ function renderMainLabel(
       lines.push(`    play sound "${sfxEnter}"`);
     }
 
-    if (mentions(shot.effects, 'sakura') || mentions(shot.effects, 'particle')) {
+    if (shot.effects.includes('sakura')) {
       lines.push('    show sakura');
     }
 
-    const transformName = pickTransform(shot.transforms, shot.staging);
+    const transformName = spriteTransformFor(shot.transform);
     for (const charName of shot.characters) {
       const ident = charIdents.get(charName);
       if (!ident) continue;
       lines.push(`    show sprite_${ident} at ${transformName}`);
     }
 
-    if (mentions(shot.transforms, 'heart_pulse') || mentions(shot.staging, 'heart_pulse')) {
+    if (shot.transform === 'heart_pulse') {
       lines.push('    show layer master at heart_pulse');
     }
-    if (mentions(shot.transforms, 'reset') || mentions(shot.staging, 'reset')) {
+    if (shot.transform === 'reset') {
       lines.push('    show layer master at reset_layer');
     }
 
@@ -498,25 +546,16 @@ function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
-function mentions(haystack: string | undefined, needle: string): boolean {
-  if (!haystack) return false;
-  return haystack.toLowerCase().includes(needle.toLowerCase());
-}
-
-function transitionToken(transition: string): string | null {
-  const t = transition.toLowerCase();
-  if (t.includes('fade')) return 'fade';
-  if (t.includes('dissolve')) return 'dissolve';
-  return null;
-}
-
-function pickTransform(transforms: string, staging: string): string {
-  const source = `${transforms} ${staging}`.toLowerCase();
-  if (source.includes('forehead')) return 'forehead';
-  if (source.includes('finger')) return 'finger';
-  if (source.includes('front') || source.includes('lean')) return 'front';
-  if (source.includes('lookup') || source.includes('look up')) return 'lookup';
-  return 'stand';
+/**
+ * Map shot.transform enum → Ren'Py sprite transform name.
+ *
+ * `heart_pulse` / `reset` only make sense as layer-wide transforms (applied to
+ * `layer master`), so we fall back to `stand` on individual sprites and let
+ * the caller emit the `show layer master at ...` line separately.
+ */
+function spriteTransformFor(transform: ShotTransform): string {
+  if (transform === 'heart_pulse' || transform === 'reset') return 'stand';
+  return transform;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,16 @@
 import type { LlmClient, LlmToolUseBlock } from '../llm/types.js';
 import { retryOnStageValidationError } from '../llm/retry.js';
 import { wrapParseError } from '../llm/stage-parse-error.js';
-import type { PlannerOutput, StoryboarderOutput, WriterOutput } from './types.js';
+import {
+  SHOT_EFFECTS,
+  SHOT_STAGING,
+  SHOT_TRANSFORMS,
+  SHOT_TRANSITIONS,
+  type PlannerOutput,
+  type StoryboarderOutput,
+  type WriterOutput,
+} from './types.js';
+import { normalizeStoryboarderOutput } from './shot-enum.js';
 
 const STORYBOARDER_SYSTEM = `You are the Storyboarder for a Ren'Py galgame Stage-A playable demo.
 You condense the Writer's script into AT MOST 8 shots. For each shot you describe the staging
@@ -9,13 +18,32 @@ in Ren'Py-flavored terms (the Coder will translate into actual .rpy).
 
 Reference patterns from baiying-demo (the Stage-A fixture we're modeling after):
 - Each shot typically uses ONE location (from planner.scenes[].name) and 0-2 characters.
-- "staging" uses verbs like "enter", "lookup", "front", "finger", "forehead",
-  "hide_sakura", "show_particles", "text_input".
-- "transforms" describes camera / character motion: "stand breathing", "lean in",
-  "pull back", "heart_pulse", "reset".
-- "transition": one of "fade", "dissolve", "none".
-- "effects": optional, e.g. "sakura particles", "text shader jitter".
-- The final shot should include a closing beat.
+- The Coder dispatches on enum values only; free prose in these fields is IGNORED.
+
+**Enum fields** — choose ONE (or array for effects) per shot:
+
+- \`transform\` (camera / character motion, one of):
+  - stand        — gentle breathing idle (baseline for a standing character)
+  - lookup       — character tilts head up
+  - front        — pull camera forward, medium close
+  - finger       — tight zoom to face / pointing gesture
+  - forehead     — extreme close-up on forehead
+  - heart_pulse  — whole-layer rhythmic zoom (emotional beat)
+  - reset        — release any in-flight layer transform
+  - pan_left     — camera pans to screen-left
+  - pan_right    — camera pans to screen-right
+  - fade_in      — sprite fades into view from transparent
+  - fade_out     — sprite fades out to transparent
+  - shake        — quick horizontal shake (impact / shock)
+  - blink        — two-beat alpha blink (tension / time skip)
+
+- \`staging\` (character placement on stage, one of):
+  - solo_center | solo_left | solo_right | two_shot | group | none
+
+- \`transition\` (between shots, one of): fade | dissolve | none
+
+- \`effects\` (particle overlays, ARRAY — use [] for none):
+  - sakura | snow | rain | lensflare | none
 
 Cutscene (video) path — ONLY use when the beat genuinely demands motion that static
 sprites + transforms cannot sell:
@@ -25,7 +53,7 @@ sprites + transforms cannot sell:
   referenceSceneName + referenceCharacterName (ONE hero character).
 - Omit the cutscene field entirely for normal dialogue shots. Do NOT mark more than 2
   cutscene shots per 8-shot board — videos are expensive and slow.
-- When cutscene is set, sceneName / characters / staging / transforms still fill in for
+- When cutscene is set, sceneName / characters / staging / transform still fill in for
   Stage A placeholder rendering (the Coder shows a black screen + caption until the real
   video is ready).
 
@@ -57,16 +85,25 @@ const STORYBOARDER_TOOL_INPUT_SCHEMA = {
             type: 'string',
             description: 'one of planner.scenes[].name',
           },
-          staging: { type: 'string', description: 'short phrase; see verb list in system prompt' },
-          transforms: {
+          staging: {
             type: 'string',
-            description: 'short phrase; see verb list in system prompt',
+            enum: [...SHOT_STAGING],
+            description: 'character placement enum (see system prompt)',
+          },
+          transform: {
+            type: 'string',
+            enum: [...SHOT_TRANSFORMS],
+            description: 'camera / motion enum (see system prompt)',
           },
           transition: {
             type: 'string',
-            enum: ['fade', 'dissolve', 'none'],
+            enum: [...SHOT_TRANSITIONS],
           },
-          effects: { type: 'string', description: 'optional short phrase' },
+          effects: {
+            type: 'array',
+            items: { type: 'string', enum: [...SHOT_EFFECTS] },
+            description: 'particle overlay enums — use [] for none',
+          },
           cutscene: {
             type: 'object',
             description: 'Only present when the shot genuinely needs a motion video beat.',
@@ -98,8 +135,9 @@ const STORYBOARDER_TOOL_INPUT_SCHEMA = {
           'characters',
           'sceneName',
           'staging',
-          'transforms',
+          'transform',
           'transition',
+          'effects',
           'dialogueLines',
         ],
       },
@@ -155,7 +193,9 @@ export async function runStoryboarder(
       try {
         const parsed = extractToolInput(res.content, 'emit_storyboarder_output');
         assertStoryboarderOutput(parsed);
-        return parsed;
+        // Normalize so v0.7 enum shape is always what downstream sees, even if
+        // the LLM ignored `enum` and emitted legacy prose.
+        return normalizeStoryboarderOutput(parsed);
       } catch (e) {
         throw wrapParseError(e, JSON.stringify(res.content));
       }

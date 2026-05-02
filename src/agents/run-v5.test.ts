@@ -99,9 +99,10 @@ describe('runV5 — end-to-end scripted happy path', () => {
           description: 'meeting',
           characters: ['Baiying'],
           sceneName: 'classroom',
-          staging: 'mid',
-          transforms: 'none',
+          staging: 'solo_center',
+          transform: 'stand',
           transition: 'fade',
+          effects: [],
           dialogueLines: [
             { speaker: 'Baiying', text: 'hello' },
             { speaker: 'narrator', text: 'She smiled.' },

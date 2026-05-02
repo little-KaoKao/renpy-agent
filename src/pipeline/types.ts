@@ -55,15 +55,58 @@ export interface StoryboarderOutputCutscene {
   readonly referenceCharacterName?: string;
 }
 
+// Shot enums — Storyboarder emits these via JSON-Schema `enum`, Coder
+// dispatches on the exact value. Kept in the types module so both producer
+// and consumer import the same source of truth.
+
+export const SHOT_TRANSFORMS = [
+  // Original 7 (parity with baiying-demo):
+  'stand',
+  'lookup',
+  'front',
+  'finger',
+  'forehead',
+  'heart_pulse',
+  'reset',
+  // v0.7 additions for rpy diversity:
+  'pan_left',
+  'pan_right',
+  'fade_in',
+  'fade_out',
+  'shake',
+  'blink',
+] as const;
+export type ShotTransform = (typeof SHOT_TRANSFORMS)[number];
+
+export const SHOT_STAGING = [
+  'solo_center',
+  'solo_left',
+  'solo_right',
+  'two_shot',
+  'group',
+  'none',
+] as const;
+export type ShotStaging = (typeof SHOT_STAGING)[number];
+
+export const SHOT_EFFECTS = ['sakura', 'snow', 'rain', 'lensflare', 'none'] as const;
+export type ShotEffect = (typeof SHOT_EFFECTS)[number];
+
+export const SHOT_TRANSITIONS = ['fade', 'dissolve', 'none'] as const;
+export type ShotTransition = (typeof SHOT_TRANSITIONS)[number];
+
 export interface StoryboarderOutputShot {
   readonly shotNumber: number;
   readonly description: string;
   readonly characters: ReadonlyArray<string>;
   readonly sceneName: string;
-  readonly staging: string;
-  readonly transforms: string;
-  readonly transition: string;
-  readonly effects?: string;
+  readonly staging: ShotStaging;
+  readonly transform: ShotTransform;
+  readonly transition: ShotTransition;
+  readonly effects: ReadonlyArray<ShotEffect>;
+  /** Free-form text from legacy pre-v0.7 workspaces; `audio-ui` keyword matcher reads `effects_raw`. */
+  readonly staging_raw?: string;
+  readonly transforms_raw?: string;
+  readonly effects_raw?: string;
   readonly dialogueLines: ReadonlyArray<StoryboarderOutputDialogueLine>;
   readonly cutscene?: StoryboarderOutputCutscene;
 }
