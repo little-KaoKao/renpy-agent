@@ -11,6 +11,8 @@ import type { FetchLike } from '../assets/download.js';
 import { runPlannerTask } from './planner.js';
 import type { CommonToolContext, TaskAgentRegistry } from './common-tools.js';
 import { workspaceDirForGame } from './workspace-index.js';
+import { BudgetExceededError, BudgetTracker, wrapLlmClientWithBudget } from './budget.js';
+import { appendPlannerMemory } from './memory.js';
 
 export interface RunV5Params {
   readonly storyName: string;
@@ -25,6 +27,19 @@ export interface RunV5Params {
   readonly runningHubClient?: RunningHubClient;
   readonly registryPath?: string;
   readonly fetchFn?: FetchLike;
+  /**
+   * Optional: safety cap in USD. When cumulative LLM spend (Sonnet 4.6 list
+   * price, cacheReadInputTokens not discounted) exceeds this cap, the next
+   * `chatWithTools` call throws `BudgetExceededError` and the Planner loop
+   * lands a graceful finish with `budgetCappedEarly: true`.
+   */
+  readonly budgetCapUsd?: number;
+  /**
+   * Optional: per-call timeout for `call_task_agent` invocations. Covers
+   * RunningHub submissions that hang (observed MJ v7 avg 2-3 min; default
+   * 5 min leaves ample headroom).
+   */
+  readonly taskAgentTimeoutMs?: number;
 }
 
 export interface RunV5Result {
@@ -32,6 +47,12 @@ export interface RunV5Result {
   readonly gameDir: string;
   readonly plannerTaskCount: number;
   readonly finalSummary: string;
+  /** Total LLM cost estimate in USD at Sonnet 4.6 list pricing (conservative). */
+  readonly totalCostUsd: number;
+  /** The cap that was set for this run, if any. */
+  readonly budgetCapUsd?: number;
+  /** True when a BudgetExceededError forced an early graceful exit. */
+  readonly budgetCappedEarly: boolean;
 }
 
 function parseEnvMax(raw: string | undefined): number | undefined {
@@ -62,36 +83,64 @@ export async function runV5(params: RunV5Params): Promise<RunV5Result> {
     'utf8',
   );
 
+  const tracker = new BudgetTracker(params.budgetCapUsd);
+  const wrappedLlm = wrapLlmClientWithBudget(params.llm, tracker);
+  const logger = params.logger ?? defaultLogger();
+
   const ctx: CommonToolContext = {
     storyName: params.storyName,
     gameDir: params.gameDir,
     workspaceDir,
     memoryDir,
     taskAgents: params.taskAgents ?? {},
-    logger: params.logger ?? defaultLogger(),
-    llm: params.llm,
+    logger,
+    llm: wrappedLlm,
     ...(params.runningHubClient !== undefined
       ? { runningHubClient: params.runningHubClient }
       : {}),
     ...(params.registryPath !== undefined ? { registryPath: params.registryPath } : {}),
     ...(params.fetchFn !== undefined ? { fetchFn: params.fetchFn } : {}),
+    ...(params.taskAgentTimeoutMs !== undefined
+      ? { taskAgentTimeoutMs: params.taskAgentTimeoutMs }
+      : {}),
   };
 
   const envMax = parseEnvMax(process.env.V5_MAX_PLANNER_TASKS);
   const maxPlannerTasks = params.maxPlannerTasks ?? envMax ?? 40;
   let finalSummary = '';
   let taskCount = 0;
+  let budgetCappedEarly = false;
 
   for (let i = 0; i < maxPlannerTasks; i++) {
-    const result = await runPlannerTask({
-      storyName: params.storyName,
-      llm: params.llm,
-      ctx,
-      executerLlm: params.llm,
-    });
-    taskCount++;
-    finalSummary = result.taskSummary;
-    if (result.done) break;
+    try {
+      const result = await runPlannerTask({
+        storyName: params.storyName,
+        llm: wrappedLlm,
+        ctx,
+        executerLlm: wrappedLlm,
+      });
+      taskCount++;
+      finalSummary = result.taskSummary;
+      if (result.done) break;
+    } catch (err) {
+      if (err instanceof BudgetExceededError) {
+        budgetCappedEarly = true;
+        finalSummary = `budget cap hit ($${err.totalCostUsd.toFixed(4)} > $${err.capUsd.toFixed(2)}), stopped early`;
+        logger.warn('budget_cap_hit', {
+          capUsd: err.capUsd,
+          totalCostUsd: err.totalCostUsd,
+          plannerTaskCount: taskCount,
+        });
+        // Persist a finish marker so rebuild / re-entry sees the budget stop.
+        await appendPlannerMemory(memoryDir, {
+          taskId: `budget-cap-${Date.now()}`,
+          kind: 'finish',
+          summary: finalSummary,
+        });
+        break;
+      }
+      throw err;
+    }
   }
 
   return {
@@ -99,5 +148,8 @@ export async function runV5(params: RunV5Params): Promise<RunV5Result> {
     gameDir: params.gameDir,
     plannerTaskCount: taskCount,
     finalSummary,
+    totalCostUsd: tracker.totalCostUsd,
+    ...(params.budgetCapUsd !== undefined ? { budgetCapUsd: params.budgetCapUsd } : {}),
+    budgetCappedEarly,
   };
 }

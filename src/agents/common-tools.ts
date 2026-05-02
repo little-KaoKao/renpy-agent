@@ -63,6 +63,12 @@ export interface CommonToolContext {
   readonly registryPath?: string;
   /** Optional: fetch override for asset downloads (tests pin this to a local server). */
   readonly fetchFn?: FetchLike;
+  /**
+   * Optional per-call timeout (ms) for `call_task_agent`. When a task agent
+   * exceeds this, we abort with a `timeout` error and guidance to mark the
+   * asset as placeholder. Undefined = no timeout (legacy behaviour).
+   */
+  readonly taskAgentTimeoutMs?: number;
 }
 
 // ── Planner side ────────────────────────────────────────────────────
@@ -193,6 +199,8 @@ export type CallTaskAgentResult =
       readonly guidance: string;
     };
 
+const TASK_AGENT_TIMEOUT_SENTINEL = Symbol('task_agent_timeout');
+
 export async function call_task_agent(
   args: CallTaskAgentArgs,
   ctx: CommonToolContext,
@@ -207,7 +215,20 @@ export async function call_task_agent(
     };
   }
   try {
-    const output = await fn(args.input, ctx);
+    const timeoutMs = ctx.taskAgentTimeoutMs;
+    const output = await invokeWithOptionalTimeout(fn, args.input, ctx, timeoutMs);
+    if (output === TASK_AGENT_TIMEOUT_SENTINEL) {
+      ctx.logger.warn('task_agent_timeout', {
+        agentName: args.agentName,
+        timeoutMs,
+      });
+      return {
+        error: `task agent "${args.agentName}" exceeded ${timeoutMs}ms timeout`,
+        retry: false,
+        guidance:
+          'Task agent timed out. Do not retry in this run — mark the asset status "placeholder" (or "error") and let Stage B handle it later.',
+      };
+    }
     return { agentName: args.agentName, output };
   } catch (e) {
     return {
@@ -216,6 +237,26 @@ export async function call_task_agent(
       guidance:
         'Transient task-agent failure. You may retry once with the same input; if it still fails, mark the asset status "error" and continue with a placeholder.',
     };
+  }
+}
+
+async function invokeWithOptionalTimeout(
+  fn: TaskAgentFn,
+  input: Record<string, unknown>,
+  ctx: CommonToolContext,
+  timeoutMs: number | undefined,
+): Promise<Record<string, unknown> | typeof TASK_AGENT_TIMEOUT_SENTINEL> {
+  if (timeoutMs === undefined) {
+    return fn(input, ctx);
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof TASK_AGENT_TIMEOUT_SENTINEL>((resolvePromise) => {
+    timer = setTimeout(() => resolvePromise(TASK_AGENT_TIMEOUT_SENTINEL), timeoutMs);
+  });
+  try {
+    return await Promise.race([fn(input, ctx), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

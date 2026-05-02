@@ -31,6 +31,49 @@ const INSPIRATION = '一个樱花树下的告白故事';
 const USD_PER_MTOK_INPUT = 3;
 const USD_PER_MTOK_OUTPUT = 15;
 
+// Safety caps. Numbers are deliberately loose — the run should normally hit
+// single-digit dollars; the cap is there to stop a runaway tool_use loop from
+// burning through the wallet while the operator is AFK.
+const DEFAULT_BUDGET_CAP_USD = 10;
+// M0 trace: MJ v7 image tasks averaged 2-3 min each. 5 min leaves room for
+// slower scene backgrounds without rewarding hangs.
+const DEFAULT_TASK_AGENT_TIMEOUT_MS = 5 * 60 * 1000;
+
+function parseCliArgs(argv) {
+  const opts = {
+    budgetCapUsd: DEFAULT_BUDGET_CAP_USD,
+    taskAgentTimeoutMs: DEFAULT_TASK_AGENT_TIMEOUT_MS,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--budget-cap') {
+      const raw = argv[++i];
+      const n = Number.parseFloat(raw);
+      if (!Number.isFinite(n) || n <= 0) {
+        console.error(`❌ --budget-cap expects a positive number (got ${JSON.stringify(raw)})`);
+        process.exit(1);
+      }
+      opts.budgetCapUsd = n;
+    } else if (arg.startsWith('--budget-cap=')) {
+      const n = Number.parseFloat(arg.slice('--budget-cap='.length));
+      if (!Number.isFinite(n) || n <= 0) {
+        console.error(`❌ --budget-cap expects a positive number`);
+        process.exit(1);
+      }
+      opts.budgetCapUsd = n;
+    } else if (arg === '--task-agent-timeout-ms') {
+      const raw = argv[++i];
+      const n = Number.parseInt(raw, 10);
+      if (!Number.isFinite(n) || n <= 0) {
+        console.error(`❌ --task-agent-timeout-ms expects a positive integer (got ${JSON.stringify(raw)})`);
+        process.exit(1);
+      }
+      opts.taskAgentTimeoutMs = n;
+    }
+  }
+  return opts;
+}
+
 function requireEnv(name, hint) {
   const v = process.env[name];
   if (!v || v.length === 0) {
@@ -187,6 +230,7 @@ function makeFileLogger(tracer) {
 
 async function main() {
   checkEnv();
+  const cli = parseCliArgs(process.argv.slice(2));
 
   const repoRoot = process.cwd();
   const gameDir = resolve(repoRoot, 'runtime', 'games', STORY_NAME, 'game');
@@ -196,13 +240,16 @@ async function main() {
   const tracer = new JsonlAppender(traceFile);
 
   console.log('— V5 real-key smoke —');
-  console.log(`storyName:   ${STORY_NAME}`);
-  console.log(`inspiration: ${INSPIRATION}`);
-  console.log(`gameDir:     ${gameDir}`);
-  console.log(`trace:       ${traceFile}`);
+  console.log(`storyName:       ${STORY_NAME}`);
+  console.log(`inspiration:     ${INSPIRATION}`);
+  console.log(`gameDir:         ${gameDir}`);
+  console.log(`trace:           ${traceFile}`);
+  console.log(`budgetCapUsd:    $${cli.budgetCapUsd}`);
+  console.log(`taskAgentTimeout: ${cli.taskAgentTimeoutMs} ms`);
   console.log(
     '\n⚠️  This will burn real Bedrock + RunningHub tokens.\n' +
       '    Expected cost: Planner + Executers × 7 tasks ≈ $0.5 – $1.0.\n' +
+      `    Hard cap: $${cli.budgetCapUsd} (pass --budget-cap <usd> to change).\n` +
       '    Press Ctrl-C within 3s to abort...',
   );
   await sleep(3000);
@@ -230,6 +277,8 @@ async function main() {
       llm,
       gameDir,
       logger,
+      budgetCapUsd: cli.budgetCapUsd,
+      taskAgentTimeoutMs: cli.taskAgentTimeoutMs,
       // Don't inject taskAgents — v0.6 default behavior; characters/scenes
       // will route through stub hints and end up in `placeholder` state.
     });
@@ -243,7 +292,7 @@ async function main() {
   // then re-read the file to tally.
   await tracer.flush();
 
-  const { totalIn, totalOut, llmCalls } = await tallyUsage(traceFile);
+  const { totalIn, totalOut, llmCalls, taskAgentTimeouts } = await tallyUsage(traceFile);
   const estimatedCostUsd =
     (totalIn / 1_000_000) * USD_PER_MTOK_INPUT +
     (totalOut / 1_000_000) * USD_PER_MTOK_OUTPUT;
@@ -257,6 +306,14 @@ async function main() {
     traceFile,
     runResult,
     runError: runError ? { message: String(runError?.message ?? runError), stack: runError?.stack } : null,
+    budgetCapUsd: cli.budgetCapUsd,
+    budgetCappedEarly: runResult?.budgetCappedEarly ?? false,
+    // runV5's own conservative tally (source of truth for cap decisions).
+    totalCostUsd:
+      typeof runResult?.totalCostUsd === 'number'
+        ? Number(runResult.totalCostUsd.toFixed(4))
+        : null,
+    taskAgentTimeouts,
     usage: {
       llmCalls,
       totalInputTokens: totalIn,
@@ -273,15 +330,19 @@ async function main() {
   await tracer.flush();
 
   console.log('\n— summary —');
-  console.log(`durationMs:       ${durationMs}`);
-  console.log(`plannerTaskCount: ${runResult?.plannerTaskCount ?? '(n/a)'}`);
-  console.log(`finalSummary:     ${runResult?.finalSummary ?? '(n/a)'}`);
-  console.log(`llmCalls:         ${llmCalls}`);
-  console.log(`totalInputTokens: ${totalIn}`);
-  console.log(`totalOutputTokens:${totalOut}`);
-  console.log(`estimatedCost:    $${estimatedCostUsd.toFixed(4)} (Sonnet 4.6 list price)`);
-  console.log(`trace:            ${traceFile}`);
-  console.log(`gameDir:          ${gameDir}`);
+  console.log(`durationMs:         ${durationMs}`);
+  console.log(`plannerTaskCount:   ${runResult?.plannerTaskCount ?? '(n/a)'}`);
+  console.log(`finalSummary:       ${runResult?.finalSummary ?? '(n/a)'}`);
+  console.log(`llmCalls:           ${llmCalls}`);
+  console.log(`totalInputTokens:   ${totalIn}`);
+  console.log(`totalOutputTokens:  ${totalOut}`);
+  console.log(`estimatedCost:      $${estimatedCostUsd.toFixed(4)} (trace tally)`);
+  console.log(`runV5 totalCostUsd: $${(runResult?.totalCostUsd ?? 0).toFixed(4)}`);
+  console.log(`budgetCapUsd:       $${cli.budgetCapUsd}`);
+  console.log(`budgetCappedEarly:  ${runResult?.budgetCappedEarly ?? false}`);
+  console.log(`taskAgentTimeouts:  ${taskAgentTimeouts}`);
+  console.log(`trace:              ${traceFile}`);
+  console.log(`gameDir:            ${gameDir}`);
 
   if (runError) {
     console.error(`\n❌ V5 run threw: ${runError.message}`);
@@ -296,6 +357,7 @@ async function tallyUsage(traceFile) {
   let totalIn = 0;
   let totalOut = 0;
   let llmCalls = 0;
+  let taskAgentTimeouts = 0;
   try {
     const raw = await readFile(traceFile, 'utf8');
     for (const line of raw.split('\n')) {
@@ -310,12 +372,14 @@ async function tallyUsage(traceFile) {
         llmCalls++;
         totalIn += obj.usage?.inputTokens ?? 0;
         totalOut += obj.usage?.outputTokens ?? 0;
+      } else if (obj.type === 'logger_warn' && obj.message === 'task_agent_timeout') {
+        taskAgentTimeouts++;
       }
     }
   } catch (err) {
     console.error(`[smoke:tally-error] ${err.message}`);
   }
-  return { totalIn, totalOut, llmCalls };
+  return { totalIn, totalOut, llmCalls, taskAgentTimeouts };
 }
 
 main().catch((err) => {
