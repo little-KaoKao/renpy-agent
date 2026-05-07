@@ -42,7 +42,8 @@ renpy-sdk/renpy.exe docs/examples/baiying-demo
 # 5. 构建 agent 代码
 pnpm build
 
-# 6a. v0.7 推荐路径:V5 Planner/Executer(真资产 + prompt cache,成本 ~$2)
+# 6a. v0.8 推荐路径:V5 Planner/Executer(Stage A + Stage B,成本 ~$2-20)
+#     设置 RUNNINGHUB_API_KEY 后自动触发 Stage B(BGM / 语音 / SFX / UI)
 node --env-file=.env dist/cli.js v5 --story sakura-night "一个关于樱花树下告白的故事"
 
 # 6b. 老路径:v0.2 minimal pipeline(Planner → Writer → Storyboarder → Coder → QA)
@@ -181,8 +182,10 @@ node --env-file=.env scripts/runninghub-smoke.mjs CHARACTER_MAIN_IMAGE SCENE_BAC
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock 必需 | Bedrock bearer token |
 | `ANTHROPIC_API_KEY` | 直连必需 | 只在 `CLAUDE_CODE_USE_BEDROCK` 未开时用 |
 | `CLAUDE_MODEL` | 可选 | 覆盖默认模型,Bedrock 下默认 `us.anthropic.claude-sonnet-4-6`(inference profile) |
-| `RUNNINGHUB_API_KEY` | 真资产必需 | v0.3+ 图/视频/音频生成;v0.7 的 `v5` 若无此 key 会 fallback 到 DRY_RUN stub |
+| `RUNNINGHUB_API_KEY` | 真资产必需 | v0.3+ 图/视频/音频生成;`v5` 若无此 key 会 fallback 到 DRY_RUN stub。v0.8 起设置此 key 后 Planner 在 Stage A 完成后自动继续 Stage B(BGM / 语音 / SFX / UI) |
 | `CLAUDE_BEDROCK_CACHE` | 可选 | `0` 关闭 Bedrock prompt cache(默认开)。v0.7 起 system 段已膨胀 > 4096 chars,cache read share 实测 ~72% |
 | `CLAUDE_DISABLE_CACHE` | 可选 | `1` 双模式总开关(直连 + Bedrock)全关 cache |
 
-> v0.7 的 `v5` 子命令默认启用 prompt cache,并在 `runtime/games/<story>/logs/v5-smoke-summary-*.json` 里记录 `budgetCapUsd` / `budgetCappedEarly` / `taskAgentTimeouts`。真 key 验收脚本 `scripts/v5-real-key-smoke.mjs --budget-cap <usd>` 是官方的 release gate,任何 merge 前都应确认它干净跑通。
+> v0.8 的 `v5` 子命令默认启用 prompt cache,并在 `runtime/games/<story>/logs/v5-smoke-summary-*.json` 里记录 `budgetCapUsd` / `budgetCappedEarly` / `taskAgentTimeouts`。真 key 验收脚本 `scripts/v5-real-key-smoke.mjs --budget-cap <usd>` 是官方的 release gate,任何 merge 前都应确认它干净跑通。
+>
+> **Stage B**:设置 `RUNNINGHUB_API_KEY` 后,Planner 在 Stage A qa 通过后自动继续 Tier 2 POC(music_director → sfx_designer → voice_director → ui_designer → coder → qa),产出 BGM / 语音 / SFX / UI patch。不设置则跳过 Stage B,以 "Stage A delivered" 结束。
