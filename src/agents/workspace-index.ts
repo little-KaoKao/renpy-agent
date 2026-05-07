@@ -88,6 +88,7 @@ export interface WorkspaceIndexEntry {
 
 export interface WorkspaceIndex {
   readonly entries: ReadonlyArray<WorkspaceIndexEntry>;
+  readonly tier2Available: boolean;
   formatForPrompt(): string;
 }
 
@@ -100,6 +101,7 @@ interface LooseDoc {
 export async function buildWorkspaceIndex(gameDir: string): Promise<WorkspaceIndex> {
   const wsDir = workspaceDirForGame(gameDir);
   const entries: WorkspaceIndexEntry[] = [];
+  const tier2Available = Boolean(process.env.RUNNINGHUB_API_KEY);
 
   for (const kind of SINGLETON_KINDS) {
     const path = resolve(wsDir, `${kind}.json`);
@@ -138,12 +140,16 @@ export async function buildWorkspaceIndex(gameDir: string): Promise<WorkspaceInd
 
   return {
     entries,
+    tier2Available,
     formatForPrompt(): string {
       if (entries.length === 0) return '(workspace is empty)';
       const lines = entries.map(
         (e) => `- ${e.uri}  [${e.kind}, ${e.status}]  ${e.title}`,
       );
-      return lines.join('\n');
+      const header = tier2Available
+        ? 'tier2Available: true\n\n'
+        : 'tier2Available: false\n\n';
+      return header + lines.join('\n');
     },
   };
 }
