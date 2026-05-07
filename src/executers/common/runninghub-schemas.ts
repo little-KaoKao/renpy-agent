@@ -206,7 +206,8 @@ export const RUNNINGHUB_APP_SCHEMAS: Readonly<Record<RunningHubAppKey, AiAppSche
 
   // §3.4 SFX 暂借 Qwen3 TTS:音效描述塞 line_text,「朗读者」塞 voice_text。
   // 同 VOICE_LINE,select="2" = 手写(按字生成),select="1" = 随机。
-  // TODO: swap to dedicated TTA (text-to-audio) when available.
+  // NOTE: RunningHub 暂无专用 TTA (text-to-audio) 模型,继续复用 Qwen3 TTS。
+  // 音质较差,待 RunningHub 部署 TTA workflow 后再切换(Phase A 已知妥协)。
   SFX: {
     webappId: RUNNINGHUB_APP_IDENTITIES.SFX.webappId,
     displayName: RUNNINGHUB_APP_IDENTITIES.SFX.displayName,
