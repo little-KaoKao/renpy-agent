@@ -4,7 +4,8 @@
 // 与 VOICE_LINE 同 webappId)。"音效描述"塞 `line_text`,"朗读者"塞 `voice_text`
 // 的默认 'ambient sound field, no voice, pure environmental audio'。
 //
-// TODO: 复用 TTS 的音质很差,后续换独立 TTA(text-to-audio)模型 ——
+// NOTE: RunningHub 暂无专用 TTA (text-to-audio) 模型,继续复用 Qwen3 TTS。
+// 音质较差,待 RunningHub 部署 TTA workflow 后再切换 ——
 // 对应 Plan 1 §3.4 / Plan 2 §3.3 的已知妥协。
 //
 // Ren'Py 端:Coder 在 Shot 头按 cue=enter 插 `play sound`,在 Shot 尾按 cue=exit 插。
