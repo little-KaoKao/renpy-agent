@@ -33,7 +33,7 @@ import { isPocRole, type PocRole } from './poc-registry.js';
 import { SCHEMA_DIGEST } from '../schema/galgame-workspace.js';
 
 const PLANNER_RULES = `You are the Planner for a Ren'Py galgame production pipeline.
-Your job: decide the next task to push the project toward a playable Stage A demo.
+Your job: decide the next task to push the project toward a playable demo.
 
 Rules:
 1. You cannot generate assets yourself. To get work done, hand off to a POC with handoff_to_agent.
@@ -43,8 +43,7 @@ Rules:
 3. A sensible Stage A order: producer (create project + chapter) -> character_designer(s)
    -> scene_designer(s) -> writer -> storyboarder -> coder -> qa.
 4. Before acting, you may inspect workspace state with read_from_uri.
-5. When all required POCs have run and you see nothing else to push forward,
-   call output_with_finish with taskSummary="no more tasks, Stage A delivered".
+5. When all Stage A POCs have run and qa passes lint, check if Stage B is available.
 6. Each turn: call exactly ONE tool_use. Read its result, then plan the next call.
 7. You may use output_with_plan once at the start of a task to declare (in pseudo-code)
    what you intend to do; this is only for audit, the host does not parse it.
@@ -52,6 +51,17 @@ Rules:
    already exist AND prior memories include a finish with "Stage A delivered" / "no more tasks",
    you should call output_with_finish immediately with the same wording. Do NOT re-read every
    URI — trust the memory log. This saves a full LLM round-trip on rebuild.
+
+Stage B (optional, runs after Stage A qa passes):
+After Stage A qa passes lint, check the workspace index for "tier2Available: true".
+If present, continue with Tier 2 POCs to add polish:
+  - music_director: generate BGM tracks for scene moods
+  - voice_director: generate voice lines for key dialogue
+  - sfx_designer: generate ambient SFX for transitions
+  - ui_designer: generate UI patches (title screen, textbox)
+Stage B order: music_director -> sfx_designer -> voice_director -> ui_designer -> coder -> qa
+After Stage B qa passes, call output_with_finish with taskSummary="Stage A+B delivered".
+If tier2Available is false, finish with "Stage A delivered" after Stage A qa passes.
 `;
 
 // Modify-mode Planner rules (§5.5). Replaces PLANNER_RULES when the orchestrator
@@ -185,28 +195,28 @@ const PLANNER_POC_CAPABILITIES = `POC capability reference (for handoff_to_agent
     If lint fails, kick_back_to_coder files a BugReport that Planner should
     read and then re-handoff coder.
 
-- music_director (tier 2, optional for Stage A)
+- music_director (tier 2, Stage B)
     Owns: bgmTrack.
     Tools: generate_bgm_track. SunoV5 backend; chapter / route / scene scope.
-    Skip unless the brief explicitly asks for BGM.
+    Use in Stage B when tier2Available is true.
 
-- voice_director (tier 2, optional for Stage A)
+- voice_director (tier 2, Stage B)
     Owns: voiceLine.
     Tools: generate_voice_line. One voiceLine per (script line, character).
-    Qwen3 / Minimax backend. Skip unless explicitly requested.
+    Qwen3 / Minimax backend. Use in Stage B when tier2Available is true.
 
-- sfx_designer (tier 2, optional for Stage A)
+- sfx_designer (tier 2, Stage B)
     Owns: sfx.
     Tools: generate_sfx. Per shot + cue (enter / action / exit / ambient).
-    Skip unless explicitly requested.
+    Use in Stage B when tier2Available is true.
 
-- ui_designer (tier 2, optional for Stage A)
+- ui_designer (tier 2, Stage B)
     Owns: uiDesign.
     Tools: generate_ui_patch. Patches screens.rpy mood; buttons/backgrounds
-    reuse scene/prop asset chain. Skip unless brief requests UI polish.
+    reuse scene/prop asset chain. Use in Stage B when tier2Available is true.
 
-Tier-2 roles are legitimate handoffs for Stage B or for a 'polish the game'
-follow-up brief; NEVER invoke them during a first Stage A pass.
+Tier-2 roles are for Stage B polish after Stage A qa passes. Only invoke them
+when tier2Available is true in the workspace index.
 `;
 
 export const PLANNER_SYSTEM_PROMPT = [
